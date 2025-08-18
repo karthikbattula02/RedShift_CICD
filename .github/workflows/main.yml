@@ -12,7 +12,7 @@ jobs:
       - name: Check webhook delivery status
         uses: actions/github-script@v6
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.WEBHOOK_PAT }}
           script: |
             const repo = context.repo;
             const webhooks = await github.rest.repos.listWebhooks({
