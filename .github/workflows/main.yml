@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check webhook delivery status
+        id: check-webhook
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.WEBHOOK_PAT }}
@@ -23,11 +24,10 @@ jobs:
             const failed = [];
 
             for (const hook of webhooks.data) {
-              const deliveries = await github.request(`GET /repos/${repo.owner}/${repo.repo}/hooks/${hook.id}/deliveries`, {
-                headers: {
-                  accept: 'application/vnd.github.v3+json'
-                }
-              });
+              const deliveries = await github.request(
+                `GET /repos/${repo.owner}/${repo.repo}/hooks/${hook.id}/deliveries`,
+                { headers: { accept: 'application/vnd.github.v3+json' } }
+              );
 
               deliveries.data.forEach(delivery => {
                 if (delivery.status !== 'success') {
@@ -35,14 +35,17 @@ jobs:
                     id: hook.id,
                     url: hook.config.url,
                     status: delivery.status,
-                    code: delivery.response.status
+                    code: delivery.response?.status || 'N/A'
                   });
                 }
               });
             }
 
             if (failed.length > 0) {
+              console.log("Failed webhook deliveries:", failed); // ✅ Debug log
               core.setOutput("failed_webhooks", JSON.stringify(failed));
+            } else {
+              console.log("No failed webhooks 🚀");
             }
 
       - name: Send email if webhook failed
@@ -58,4 +61,5 @@ jobs:
           from: GitHub Action
           body: |
             One or more webhook deliveries failed:
+
             ${{ steps.check-webhook.outputs.failed_webhooks }}
