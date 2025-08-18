@@ -1,0 +1,61 @@
+name: Monitor Webhook Failures
+
+on:
+ push:
+ branches:
+ - main
+
+jobs:
+ check-webhook:
+ runs-on: ubuntu-latest
+ steps:
+ - name: Check webhook delivery status
+ uses: actions/github-script@v6
+ with:
+ github-token: ${{ secrets.GITHUB_TOKEN }}
+ script: |
+ const repo = context.repo;
+ const webhooks = await github.rest.repos.listWebhooks({
+ owner: repo.owner,
+ repo: repo.repo
+ });
+
+ const failed = [];
+
+ for (const hook of webhooks.data) {
+ const deliveries = await github.request(`GET /repos/${repo.owner}/${repo.repo}/hooks/${hook.id}/deliveries`, {
+ headers: {
+ accept: 'application/vnd.github.v3+json'
+ }
+ });
+
+ deliveries.data.forEach(delivery => {
+ if (delivery.status !== 'success') {
+ failed.push({
+ id: hook.id,
+ url: hook.config.url,
+ status: delivery.status,
+ code: delivery.response.status
+ });
+ }
+ });
+ }
+
+ if (failed.length > 0) {
+ core.setOutput("failed_webhooks", JSON.stringify(failed));
+ }
+
+ - name: Send email if webhook failed
+ if: steps.check-webhook.outputs.failed_webhooks != ''
+ uses: dawidd6/action-send-mail@v3
+ with:
+ server_address: smtp.gmail.com
+ server_port: 587
+ username: ${{ secrets.EMAIL_USERNAME }}
+ password: ${{ secrets.EMAIL_PASSWORD }}
+ subject: "GitHub Webhook Failure Alert"
+ to: your-email@example.com
+ from: GitHub Action
+ body: |
+ One or more webhook deliveries failed:
+ ${{ steps.check-webhook.outputs.failed_webhooks }}
