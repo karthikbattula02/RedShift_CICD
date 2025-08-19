@@ -1,65 +1,49 @@
-name: Monitor Webhook Failures
+name: CI Pipeline
 
 on:
   push:
     branches:
       - main
+  pull_request:
 
 jobs:
-  check-webhook:
+  build:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Check webhook delivery status
-        id: check-webhook
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.WEBHOOK_PAT }}
-          script: |
-            const repo = context.repo;
-            const webhooks = await github.rest.repos.listWebhooks({
-              owner: repo.owner,
-              repo: repo.repo
-            });
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-            const failed = [];
+      - name: Run a step that fails
+        run: |
+          echo "This step will fail to test email notification"
+          exit 1   # Forces failure
 
-            for (const hook of webhooks.data) {
-              const deliveries = await github.request(
-                `GET /repos/${repo.owner}/${repo.repo}/hooks/${hook.id}/deliveries`,
-                { headers: { accept: 'application/vnd.github.v3+json' } }
-              );
-
-              deliveries.data.forEach(delivery => {
-                if (delivery.status !== 'success') {
-                  failed.push({
-                    id: hook.id,
-                    url: hook.config.url,
-                    status: delivery.status,
-                    code: delivery.response?.status || 'N/A'
-                  });
-                }
-              });
-            }
-
-            if (failed.length > 0) {
-              console.log("Failed webhook deliveries:", failed); // ✅ Debug log
-              core.setOutput("failed_webhooks", JSON.stringify(failed));
-            } else {
-              console.log("No failed webhooks 🚀");
-            }
-
-      - name: Send email if webhook failed
-        if: steps.check-webhook.outputs.failed_webhooks != ''
+      - name: Send Email on Failure
+        if: failure()   # Runs only when any step fails
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
-          server_port: 587
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "GitHub Webhook Failure Alert"
-          to: photoskarthik2@gmail.com
-          from: GitHub Action
+          server_port: 465
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "🚨 GitHub Actions Workflow Failed - ${{ github.repository }}"
+          to: "yourmail@example.com"
+          from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
+          secure: true
           body: |
-            One or more webhook deliveries failed:
+            Hello,
 
-            ${{ steps.check-webhook.outputs.failed_webhooks }}
+            The GitHub Actions workflow **${{ github.workflow }}** failed.
+            
+            Repository: **${{ github.repository }}**
+            Branch: **${{ github.ref_name }}**
+            Commit: **${{ github.sha }}**
+            Triggered by: **${{ github.actor }}**
+
+            Failure Reason: One of the pipeline steps exited with status code 1.
+            
+            Please check the logs here: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Regards,  
+            GitHub Actions Bot
