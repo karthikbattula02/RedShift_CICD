@@ -1,56 +1,43 @@
-name: CI Pipeline
+name: Trigger Jenkins and Send Mail on Failure
 
 on:
-  workflow_dispatch:   # Manually trigger to test
-  push:                # On push
+  push:
     branches:
       - main
 
 jobs:
-  build:
+  trigger-jenkins:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Run Build
+      - name: Trigger Jenkins Webhook
+        id: jenkins
         run: |
-          echo "Simulating build..."
-          exit 1   # <-- Force fail for testing (remove later)
+          RESPONSE=$(curl -s -o response.txt -w "%{http_code}" http://<NGROK_URL>/github-webhook/)
+          echo "JENKINS_RESPONSE=$RESPONSE" >> $GITHUB_ENV
+          if [ "$RESPONSE" -ne 200 ]; then
+            echo "Jenkins trigger failed with status $RESPONSE"
+            cat response.txt || true
+            exit 1
+          fi
 
-      - name: Capture failure reason
-        if: failure()
-        run: |
-          echo "Job failed at step: $GITHUB_JOB" >> failure_reason.txt
-          echo "Error logs:" >> failure_reason.txt
-          tail -n 50 $GITHUB_STEP_SUMMARY >> failure_reason.txt || echo "No detailed logs" >> failure_reason.txt
-
-      - name: Send failure email
+      - name: Send email if Jenkins trigger failed
         if: failure()
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 587
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "❌ GitHub Workflow Failed: ${{ github.workflow }}"
-          to: "yourmail@example.com"
-          from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "Jenkins Webhook Trigger Failed 🚨"
+          to: "your-email@example.com"
+          from: "GitHub Actions <your-email@example.com>"
           body: |
-            Hi Team,
+            The Jenkins webhook trigger has failed.
 
-            The workflow **${{ github.workflow }}** has failed.
-            
             Repository: ${{ github.repository }}
-            Branch: ${{ github.ref }}
+            Branch: ${{ github.ref_name }}
             Commit: ${{ github.sha }}
-            Actor: ${{ github.actor }}
 
-            Failure Reason:
-            -----------------
-            ${{ job.status }}
-
-            Please check GitHub Actions logs for more details.
-
-            Regards,
-            CI Bot
+            Failure Details:
+            - HTTP Status: ${{ env.JENKINS_RESPONSE }}
+            - GitHub Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
