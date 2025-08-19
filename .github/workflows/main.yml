@@ -1,8 +1,9 @@
 name: Webhook Monitor & Redelivery
 
 on:
-  webhook_delivery:
-    types: [failed]
+  push:
+    branches:
+      - main
 
 jobs:
   handle-failure:
