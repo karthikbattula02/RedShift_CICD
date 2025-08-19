@@ -57,7 +57,7 @@ jobs:
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
           subject: "GitHub Webhook Failure Alert"
-          to: ${{ github.event.pusher.email }}
+          to: photoskarthik2@gmail.com
           from: GitHub Action
           body: |
             One or more webhook deliveries failed:
