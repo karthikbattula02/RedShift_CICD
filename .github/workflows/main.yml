@@ -23,17 +23,19 @@ jobs:
             });
 
             const latest = deliveries.data[0];
-            const statusCode = latest.response.status;
             const deliveryId = latest.id;
-
+            const response = latest.response || {};
+            const statusCode = response.status || 0; // Default to 0 if undefined
+            
             console.log(`Latest delivery status code: ${statusCode}`);
-
+            
             if (statusCode === 200) {
               core.setOutput("result", "success");
             } else {
               core.setOutput("result", "redeliver");
               core.setOutput("delivery_id", deliveryId);
             }
+
 
       - name: Redeliver webhook if needed
         if: steps.check_status.outputs.result == 'redeliver'
