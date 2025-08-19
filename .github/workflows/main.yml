@@ -1,53 +1,99 @@
-name: Webhook Trigger Workflow
+name: Webhook Monitor & Redelivery
 
 on:
-  push:
+  webhook_delivery:
+    types: [failed]
 
 jobs:
-  webhook-job:
+  handle-failure:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Call Webhook
-        id: call_webhook
-        run: |
-          response=$(curl -s -o response.txt -w "%{http_code}" -X POST "${{ secrets.WEBHOOK_URL }}")
-          echo "Response code: $response"
-          echo "response_code=$response" >> $GITHUB_ENV
-          echo "response_body<<EOF" >> $GITHUB_OUTPUT
-          cat response.txt >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+      - name: Check webhook delivery status
+        id: check_status
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.WEBHOOK_PAT }}
+          script: |
+            const { owner, repo } = context.repo;
+            const deliveryId = context.payload.delivery.id;
+            const hookId = context.payload.hook.id;
 
-      - name: Send Success Mail
-        if: env.response_code == '200'
+            const delivery = await github.rest.repos.getWebhookDelivery({
+              owner,
+              repo,
+              hook_id: hookId,
+              delivery_id: deliveryId,
+            });
+
+            const statusCode = delivery.data.response.status;
+            console.log(`Webhook failed with status code: ${statusCode}`);
+
+            if (statusCode === 200) {
+              core.setOutput("result", "success");
+            } else if ([400, 404].includes(statusCode) || delivery.data.status === "TIMED_OUT") {
+              core.setOutput("result", "redeliver");
+            } else {
+              core.setOutput("result", "failure");
+            }
+
+      - name: Redeliver webhook if needed
+        if: steps.check_status.outputs.result == 'redeliver'
+        id: redeliver
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.WEBHOOK_PAT }}
+          script: |
+            const { owner, repo } = context.repo;
+            const deliveryId = context.payload.delivery.id;
+            const hookId = context.payload.hook.id;
+
+            await github.rest.repos.redeliverWebhookDelivery({
+              owner,
+              repo,
+              hook_id: hookId,
+              delivery_id: deliveryId,
+            });
+
+            console.log("Redelivery requested. Waiting 30s...");
+            await new Promise(r => setTimeout(r, 30000));
+
+            const status = await github.rest.repos.getWebhookDelivery({
+              owner,
+              repo,
+              hook_id: hookId,
+              delivery_id: deliveryId,
+            });
+
+            console.log("Delivery status after retry:", status.data.status);
+
+            if (status.data.status === "SUCCESS") {
+              core.setOutput("final_result", "success");
+            } else {
+              core.setOutput("final_result", "failure");
+            }
+
+      - name: Send success email
+        if: steps.check_status.outputs.result == 'success' || steps.redeliver.outputs.final_result == 'success'
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
-          server_port: 587
-          username: ${{ secrets.MAIL_USERNAME }}
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "Webhook Success ✅"
-          to: "recipient@example.com"
-          from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
-          body: |
-            ✅ Webhook executed successfully on push!
-            Response Code: ${{ env.response_code }}
-            Response Body:
-            ${{ steps.call_webhook.outputs.response_body }}
+          server_port: 465
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASS }}
+          subject: "✅ Webhook Delivery Successful"
+          to: you@example.com
+          from: GitHub Bot <bot@example.com>
+          body: "The webhook delivery was successful or succeeded after redelivery."
 
-      - name: Send Failure Mail
-        if: env.response_code != '200'
+      - name: Send failure email
+        if: steps.check_status.outputs.result == 'failure' || steps.redeliver.outputs.final_result == 'failure'
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
-          server_port: 587
-          username: ${{ secrets.MAIL_USERNAME }}
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "Webhook Failed ❌"
-          to: "recipient@example.com"
-          from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
-          body: |
-            ❌ Webhook execution failed.
-            Response Code: ${{ env.response_code }}
-            Response Body:
-            ${{ steps.call_webhook.outputs.response_body }}
+          server_port: 465
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASS }}
+          subject: "❌ Webhook Delivery Failed"
+          to: you@example.com
+          from: GitHub Bot <bot@example.com>
+          body: "The webhook delivery failed and redelivery did not succeed."
