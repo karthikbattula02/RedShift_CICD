@@ -60,6 +60,6 @@ jobs:
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
           subject: "❌ Webhook Delivery Failed"
-          to: ${{ secrets.ALERT_EMAIL }} # configure this secret with recipient email(s)
-          from: GitHub Bot <bot@example.com>
+          to: photoskarthik2@gmail.com
+          from: karthikknvamma@gmail.com
           body: "The last webhook delivery timed out or failed. A redelivery was triggered."
