@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  handle-failure:
+  monitor-webhook:
     runs-on: ubuntu-latest
     steps:
       - name: Check webhook delivery status
@@ -15,26 +15,24 @@ jobs:
         with:
           github-token: ${{ secrets.WEBHOOK_PAT }}
           script: |
-            const { owner, repo } = context.repo;
-            const deliveryId = context.payload.delivery.id;
-            const hookId = context.payload.hook.id;
+            const { repo, owner } = context.repo;
+            const hookId = parseInt("${{ secrets.WEBHOOK_ID }}");
 
-            const delivery = await github.rest.repos.getWebhookDelivery({
-              owner,
-              repo,
-              hook_id: hookId,
-              delivery_id: deliveryId,
+            const deliveries = await github.request(`GET /repos/${owner}/${repo}/hooks/${hookId}/deliveries`, {
+              headers: { accept: 'application/vnd.github.v3+json' }
             });
 
-            const statusCode = delivery.data.response.status;
-            console.log(`Webhook failed with status code: ${statusCode}`);
+            const latest = deliveries.data[0];
+            const statusCode = latest.response.status;
+            const deliveryId = latest.id;
+
+            console.log(`Latest delivery status code: ${statusCode}`);
 
             if (statusCode === 200) {
               core.setOutput("result", "success");
-            } else if ([400, 404].includes(statusCode) || delivery.data.status === "TIMED_OUT") {
-              core.setOutput("result", "redeliver");
             } else {
-              core.setOutput("result", "failure");
+              core.setOutput("result", "redeliver");
+              core.setOutput("delivery_id", deliveryId);
             }
 
       - name: Redeliver webhook if needed
@@ -44,9 +42,9 @@ jobs:
         with:
           github-token: ${{ secrets.WEBHOOK_PAT }}
           script: |
-            const { owner, repo } = context.repo;
-            const deliveryId = context.payload.delivery.id;
-            const hookId = context.payload.hook.id;
+            const { repo, owner } = context.repo;
+            const hookId = parseInt("${{ secrets.WEBHOOK_ID }}");
+            const deliveryId = steps.check_status.outputs.delivery_id;
 
             await github.rest.repos.redeliverWebhookDelivery({
               owner,
@@ -79,22 +77,22 @@ jobs:
         with:
           server_address: smtp.gmail.com
           server_port: 465
-          username: ${{ secrets.SMTP_USER }}
-          password: ${{ secrets.SMTP_PASS }}
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
           subject: "✅ Webhook Delivery Successful"
-          to: you@example.com
+          to: ${{ secrets.MAIL_TO }}
           from: GitHub Bot <bot@example.com>
           body: "The webhook delivery was successful or succeeded after redelivery."
 
       - name: Send failure email
-        if: steps.check_status.outputs.result == 'failure' || steps.redeliver.outputs.final_result == 'failure'
+        if: steps.redeliver.outputs.final_result == 'failure'
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 465
-          username: ${{ secrets.SMTP_USER }}
-          password: ${{ secrets.SMTP_PASS }}
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
           subject: "❌ Webhook Delivery Failed"
-          to: you@example.com
+          to: ${{ secrets.MAIL_TO }}
           from: GitHub Bot <bot@example.com>
           body: "The webhook delivery failed and redelivery did not succeed."
