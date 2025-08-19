@@ -1,49 +1,56 @@
 name: CI Pipeline
 
 on:
-  push:
+  workflow_dispatch:   # Manually trigger to test
+  push:                # On push
     branches:
       - main
-  pull_request:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Run a step that fails
+      - name: Run Build
         run: |
-          echo "This step will fail to test email notification"
-          exit 1   # Forces failure
+          echo "Simulating build..."
+          exit 1   # <-- Force fail for testing (remove later)
 
-      - name: Send Email on Failure
-        if: failure()   # Runs only when any step fails
+      - name: Capture failure reason
+        if: failure()
+        run: |
+          echo "Job failed at step: $GITHUB_JOB" >> failure_reason.txt
+          echo "Error logs:" >> failure_reason.txt
+          tail -n 50 $GITHUB_STEP_SUMMARY >> failure_reason.txt || echo "No detailed logs" >> failure_reason.txt
+
+      - name: Send failure email
+        if: failure()
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.MAIL_USERNAME }}
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "🚨 GitHub Actions Workflow Failed - ${{ github.repository }}"
+          server_port: 587
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "❌ GitHub Workflow Failed: ${{ github.workflow }}"
           to: "yourmail@example.com"
           from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
-          secure: true
           body: |
-            Hello,
+            Hi Team,
 
-            The GitHub Actions workflow **${{ github.workflow }}** failed.
+            The workflow **${{ github.workflow }}** has failed.
             
-            Repository: **${{ github.repository }}**
-            Branch: **${{ github.ref_name }}**
-            Commit: **${{ github.sha }}**
-            Triggered by: **${{ github.actor }}**
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref }}
+            Commit: ${{ github.sha }}
+            Actor: ${{ github.actor }}
 
-            Failure Reason: One of the pipeline steps exited with status code 1.
-            
-            Please check the logs here: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            Failure Reason:
+            -----------------
+            ${{ job.status }}
 
-            Regards,  
-            GitHub Actions Bot
+            Please check GitHub Actions logs for more details.
+
+            Regards,
+            CI Bot
