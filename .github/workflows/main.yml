@@ -11,9 +11,12 @@ jobs:
       - name: Call Webhook
         id: call_webhook
         run: |
-          response=$(curl -s -o response.txt -w "%{http_code}" -X POST "https://your-actual-webhook-url.com")
-          echo "Response Code: $response"
+          response=$(curl -s -o response.txt -w "%{http_code}" -X POST "${{ secrets.WEBHOOK_URL }}")
+          echo "Response code: $response"
           echo "response_code=$response" >> $GITHUB_ENV
+          echo "response_body<<EOF" >> $GITHUB_OUTPUT
+          cat response.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Send Success Mail
         if: env.response_code == '200'
@@ -26,7 +29,11 @@ jobs:
           subject: "Webhook Success ✅"
           to: "recipient@example.com"
           from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
-          body: "Webhook executed successfully on push!"
+          body: |
+            ✅ Webhook executed successfully on push!
+            Response Code: ${{ env.response_code }}
+            Response Body:
+            ${{ steps.call_webhook.outputs.response_body }}
 
       - name: Send Failure Mail
         if: env.response_code != '200'
@@ -40,7 +47,7 @@ jobs:
           to: "recipient@example.com"
           from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
           body: |
-            Webhook execution failed.
+            ❌ Webhook execution failed.
             Response Code: ${{ env.response_code }}
             Response Body:
-            ${{ steps.call_webhook.outputs.response }}
+            ${{ steps.call_webhook.outputs.response_body }}
