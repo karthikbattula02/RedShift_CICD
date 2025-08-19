@@ -1,4 +1,4 @@
-name: Webhook Workflow
+name: Webhook Trigger Workflow
 
 on:
   push:
@@ -8,53 +8,39 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Send Webhook
-        id: webhook
+      - name: Call Webhook
+        id: call_webhook
         run: |
-          response=$(curl -s -o response.txt -w "%{http_code}" -X POST "https://your-webhook-url.com" \
-            -H "Content-Type: application/json" \
-            -d '{"event":"push"}')
-
-          echo "Response code: $response"
-          if [ "$response" -ne 200 ]; then
-            echo "Webhook failed, retrying..."
-            sleep 5
-            retry=$(curl -s -o response_retry.txt -w "%{http_code}" -X POST "https://your-webhook-url.com" \
-              -H "Content-Type: application/json" \
-              -d '{"event":"push"}')
-
-            echo "Retry Response: $retry"
-            if [ "$retry" -ne 200 ]; then
-              echo "status=failed" >> $GITHUB_OUTPUT
-            else
-              echo "status=success" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "status=success" >> $GITHUB_OUTPUT
-          fi
+          response=$(curl -s -o response.txt -w "%{http_code}" -X POST "https://your-actual-webhook-url.com")
+          echo "Response Code: $response"
+          echo "response_code=$response" >> $GITHUB_ENV
 
       - name: Send Success Mail
-        if: steps.webhook.outputs.status == 'success'
+        if: env.response_code == '200'
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 587
-          username: ${{ secrets.GMAIL_USER }}
-          password: ${{ secrets.GMAIL_APP_PASSWORD }}
-          subject: "✅ Webhook Success"
-          to: yourmail@example.com
-          from: GitHub Actions <${{ secrets.GMAIL_USER }}>
-          body: "Webhook delivered successfully after push."
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "Webhook Success ✅"
+          to: "recipient@example.com"
+          from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
+          body: "Webhook executed successfully on push!"
 
       - name: Send Failure Mail
-        if: steps.webhook.outputs.status == 'failed'
+        if: env.response_code != '200'
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 587
-          username: ${{ secrets.GMAIL_USER }}
-          password: ${{ secrets.GMAIL_APP_PASSWORD }}
-          subject: "❌ Webhook Failed"
-          to: yourmail@example.com
-          from: GitHub Actions <${{ secrets.GMAIL_USER }}>
-          body: "Webhook delivery failed even after retry."
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "Webhook Failed ❌"
+          to: "recipient@example.com"
+          from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
+          body: |
+            Webhook execution failed.
+            Response Code: ${{ env.response_code }}
+            Response Body:
+            ${{ steps.call_webhook.outputs.response }}
