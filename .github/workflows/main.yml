@@ -1,79 +1,46 @@
 name: CI/CD Pipeline
 
 on:
-  push:
+  push:   # runs on every push
     branches:
-      - "**"   # runs on every branch push
+      - main
 
 jobs:
-  monitor:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Check webhook deliveries
-        id: check
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.WEBHOOK_PAT }}
-          script: |
-            const { owner, repo } = context.repo;
-            const hook_id = process.env.WEBHOOK_ID;
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
-            // Fetch last delivery
-            const deliveries = await github.rest.repos.listWebhookDeliveries({
-              owner,
-              repo,
-              hook_id,
-              per_page: 1,
-            });
+      - name: Run build
+        run: echo "Running build pipeline..."
 
-            if (deliveries.data.length === 0) {
-              core.setOutput("failed", "false");
-              return;
-            }
-
-            let last = deliveries.data[0];
-            console.log("Last delivery:", last.status);
-
-            if (last.status === "timed_out") {
-              console.log("Delivery timed out → retrying...");
-              await github.rest.repos.redeliverWebhookDelivery({
-                owner,
-                repo,
-                hook_id,
-                delivery_id: last.id,
-              });
-
-              // wait a bit for redelivery to complete
-              await new Promise(r => setTimeout(r, 5000));
-
-              // check again
-              const redeliveries = await github.rest.repos.listWebhookDeliveries({
-                owner,
-                repo,
-                hook_id,
-                per_page: 1,
-              });
-              last = redeliveries.data[0];
-              console.log("After redelivery:", last.status);
-            }
-
-            if (last.status !== "ok") {
-              core.setOutput("failed", "true");
-            } else {
-              core.setOutput("failed", "false");
-            }
-        env:
-          WEBHOOK_ID: ${{ secrets.WEBHOOK_ID }}
-
-      - name: Send failure email
-        if: steps.check.outputs.failed == 'true'
+      - name: Send Success Mail
+        if: success()
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 465
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "❌ Webhook Delivery Failed"
-          to: photoskarthik2@gmail.com
-          from: ${{ secrets.EMAIL_USERNAME }}
-          body: "The last webhook delivery timed out or failed. A redelivery was triggered."
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "✅ Webhook & Workflow Success - ${{ github.repository }}"
+          to: yourmail@example.com
+          from: Github Actions <yourmail@example.com>
+          body: |
+            The workflow for repository **${{ github.repository }}**
+            was successfully triggered by webhook & completed.
+
+      - name: Send Failure Mail
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "❌ Webhook/Workflow Failed - ${{ github.repository }}"
+          to: yourmail@example.com
+          from: Github Actions <yourmail@example.com>
+          body: |
+            The workflow for repository **${{ github.repository }}**
+            failed after webhook trigger.
