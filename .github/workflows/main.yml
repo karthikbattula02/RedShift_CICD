@@ -1,58 +1,55 @@
-name: Webhook Monitor on Push
+name: CI/CD Pipeline
 
 on:
-  push:           # change this if you want pull_request, release, etc.
-  workflow_dispatch:
+  push:
+    branches:
+      - "**"   # runs on every branch push
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
     steps:
-      - name: Get latest webhook delivery
+      - name: Check webhook deliveries
         id: check
         uses: actions/github-script@v6
         with:
-          github-token: ${{ secrets.WEBHOOK_PAT }}   # fine-grained PAT with repo + admin:repo_hook
+          github-token: ${{ secrets.WEBHOOK_PAT }}
           script: |
             const { owner, repo } = context.repo;
-            const hook_id = process.env.WEBHOOK_ID; // store in repo secrets
+            const hook_id = process.env.WEBHOOK_ID;
 
-            // Get last webhook delivery
+            // Fetch last delivery
             const deliveries = await github.rest.repos.listWebhookDeliveries({
               owner,
               repo,
-              hook_id: hook_id,
-              per_page: 1
+              hook_id,
+              per_page: 1,
             });
 
-            const last = deliveries.data[0];
-            console.log("Last delivery status:", last.status);
+            if (deliveries.data.length === 0) {
+              core.setOutput("failed", "false");
+              return;
+            }
 
-            if (last.status !== "SUCCESS") {
-              console.log("Redelivering...");
+            const last = deliveries.data[0];
+            console.log("Last delivery:", last);
+
+            if (last.status === "timed_out") {
+              console.log("Delivery timed out → retrying...");
               await github.rest.repos.redeliverWebhookDelivery({
                 owner,
                 repo,
-                hook_id: hook_id,
+                hook_id,
                 delivery_id: last.id,
               });
+              core.setOutput("failed", "true");
+            } else if (last.status !== "ok") {
               core.setOutput("failed", "true");
             } else {
               core.setOutput("failed", "false");
             }
-
-      - name: Send success email
-        if: steps.check.outputs.failed == 'false'
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "✅ Webhook Delivery Successful"
-          to: you@example.com
-          from: GitHub Bot <bot@example.com>
-          body: "The webhook was delivered successfully."
+        env:
+          WEBHOOK_ID: ${{ secrets.WEBHOOK_ID }}
 
       - name: Send failure email
         if: steps.check.outputs.failed == 'true'
@@ -63,6 +60,6 @@ jobs:
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
           subject: "❌ Webhook Delivery Failed"
-          to: you@example.com
+          to: ${{ secrets.ALERT_EMAIL }} # configure this secret with recipient email(s)
           from: GitHub Bot <bot@example.com>
-          body: "The webhook delivery failed. A redelivery attempt was triggered."
+          body: "The last webhook delivery timed out or failed. A redelivery was triggered."
