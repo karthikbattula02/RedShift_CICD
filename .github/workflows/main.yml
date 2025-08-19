@@ -1,43 +1,68 @@
-name: Trigger Jenkins and Send Mail on Failure
+name: Webhook Monitor on Push
 
 on:
-  push:
-    branches:
-      - main
+  push:           # change this if you want pull_request, release, etc.
+  workflow_dispatch:
 
 jobs:
-  trigger-jenkins:
+  monitor:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger Jenkins Webhook
-        id: jenkins
-        run: |
-          RESPONSE=$(curl -s -o response.txt -w "%{http_code}" http://<NGROK_URL>/github-webhook/)
-          echo "JENKINS_RESPONSE=$RESPONSE" >> $GITHUB_ENV
-          if [ "$RESPONSE" -ne 200 ]; then
-            echo "Jenkins trigger failed with status $RESPONSE"
-            cat response.txt || true
-            exit 1
-          fi
+      - name: Get latest webhook delivery
+        id: check
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.WEBHOOK_PAT }}   # fine-grained PAT with repo + admin:repo_hook
+          script: |
+            const { owner, repo } = context.repo;
+            const hook_id = process.env.WEBHOOK_ID; // store in repo secrets
 
-      - name: Send email if Jenkins trigger failed
-        if: failure()
+            // Get last webhook delivery
+            const deliveries = await github.rest.repos.listWebhookDeliveries({
+              owner,
+              repo,
+              hook_id: hook_id,
+              per_page: 1
+            });
+
+            const last = deliveries.data[0];
+            console.log("Last delivery status:", last.status);
+
+            if (last.status !== "SUCCESS") {
+              console.log("Redelivering...");
+              await github.rest.repos.redeliverWebhookDelivery({
+                owner,
+                repo,
+                hook_id: hook_id,
+                delivery_id: last.id,
+              });
+              core.setOutput("failed", "true");
+            } else {
+              core.setOutput("failed", "false");
+            }
+
+      - name: Send success email
+        if: steps.check.outputs.failed == 'false'
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
-          server_port: 587
-          username: ${{ secrets.SMTP_USERNAME }}
-          password: ${{ secrets.SMTP_PASSWORD }}
-          subject: "Jenkins Webhook Trigger Failed 🚨"
-          to: "your-email@example.com"
-          from: "GitHub Actions <your-email@example.com>"
-          body: |
-            The Jenkins webhook trigger has failed.
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "✅ Webhook Delivery Successful"
+          to: you@example.com
+          from: GitHub Bot <bot@example.com>
+          body: "The webhook was delivered successfully."
 
-            Repository: ${{ github.repository }}
-            Branch: ${{ github.ref_name }}
-            Commit: ${{ github.sha }}
-
-            Failure Details:
-            - HTTP Status: ${{ env.JENKINS_RESPONSE }}
-            - GitHub Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - name: Send failure email
+        if: steps.check.outputs.failed == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "❌ Webhook Delivery Failed"
+          to: you@example.com
+          from: GitHub Bot <bot@example.com>
+          body: "The webhook delivery failed. A redelivery attempt was triggered."
