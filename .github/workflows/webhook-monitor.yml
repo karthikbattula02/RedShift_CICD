@@ -1,95 +1,73 @@
 name: Monitor Webhooks
- 
+
 on:
-
   push:
-
     branches: [main]
- 
+
 jobs:
-
   check-webhook:
-
     runs-on: ubuntu-latest
 
     steps:
-
-      - name: Check webhook delivery
-
+      - name: Check and Redeliver Webhook
         id: check-webhook
-
         uses: actions/github-script@v6
-
         with:
-
           github-token: ${{ secrets.WEBHOOK_PAT }}
-
           script: |
-
             const owner = context.repo.owner;
-
             const repo = context.repo.repo;
-
             const hookId = 558736907;
- 
+
+            // Get latest delivery
             const { data: deliveries } = await github.request(
-
               "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries",
-
               { owner, repo, hook_id: hookId }
-
             );
- 
+
             const latest = deliveries[0];
+            let mail_context = `Webhook delivery ${latest.id} status: ${latest.status}`;
+            let finalStatus = latest.status;
 
-            console.log("Latest delivery:", latest);
- 
-            let mail_context = "";
- 
-            if (latest.status === "timed_out") {
-
-              console.log(`Webhook delivery ${latest.id} timed out. Retrying...`);
-
+            // If not successful, attempt redelivery
+            if (latest.status !== "ok" && latest.response?.status_code !== 200) {
+              console.log(`Webhook delivery ${latest.id} failed with status ${latest.response?.status_code}, retrying...`);
               await github.request(
-
                 "POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts",
-
                 { owner, repo, hook_id: hookId, delivery_id: latest.id }
-
               );
 
-              mail_context = `Redelivery triggered for ${latest.id}`;
+              // Wait 10s before checking again
+              await new Promise(r => setTimeout(r, 10000));
 
+              // Fetch deliveries again
+              const { data: redeliveries } = await github.request(
+                "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries",
+                { owner, repo, hook_id: hookId }
+              );
+
+              const retried = redeliveries[0];
+              finalStatus = retried.status;
+
+              if (retried.response?.status_code === 200) {
+                mail_context = `✅ Webhook delivery ${retried.id} succeeded after retry.`;
+              } else {
+                mail_context = `❌ Webhook delivery ${retried.id} failed after retry. Status: ${retried.status}, Response: ${retried.response?.status_code}`;
+              }
             } else {
-
-              mail_context = `Webhook delivery ${latest.id} status: ${latest.status}`;
-
+              mail_context = `✅ Webhook delivery ${latest.id} succeeded with status 200.`;
             }
- 
-            // Export value to be used in next step
 
             core.setOutput("mail_context", mail_context);
- 
+
       - name: Send mail
-
         uses: dawidd6/action-send-mail@v3
-
         with:
-
           server_address: smtp.gmail.com
-
           server_port: 465
-
           username: ${{ secrets.EMAIL_USERNAME }}
-
           password: ${{ secrets.EMAIL_PASSWORD }}
-
-          subject: "GitHub Workflow Notification"
-
+          subject: "GitHub Webhook Delivery Status"
           to: "photoskarthik2@gmail.com"
-
           from: "karthikknvamma@gmail.com"
-
           body: ${{ steps.check-webhook.outputs.mail_context }}
-
- 
