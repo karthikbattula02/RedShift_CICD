@@ -1,0 +1,47 @@
+name: Monitor Webhook Failures
+
+on:
+  push:   # Run only when push happens
+    branches:
+      - main
+
+jobs:
+  check-webhook:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check last webhook delivery
+        id: check-webhook
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.WEBHOOK_PAT }}
+          script: |
+            const repo = context.repo;
+            const hookId = 558736907; // replace with your webhook ID
+
+            // fetch last deliveries
+            const deliveries = await github.request(
+              "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries",
+              { owner: repo.owner, repo: repo.repo, hook_id: hookId }
+            );
+
+            const latest = deliveries.data[0];
+            console.log("Latest delivery status:", latest.status, "Duration:", latest.duration);
+
+            if (latest.status === "timed_out") {
+              // Redeliver
+              await github.request(
+                "POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts",
+                { owner: repo.owner, repo: repo.repo, hook_id: hookId, delivery_id: latest.id }
+              );
+              core.setOutput("mailcontext", 
+                `Subject: Webhook Retry Triggered\n\nWebhook for commit ${context.sha} timed out after ${latest.duration} ms. Retried delivery.`);
+            } else if (latest.status !== "ok") {
+              core.setOutput("mailcontext", 
+                `Subject: Webhook Failed\n\nWebhook for commit ${context.sha} failed with status: ${latest.status}.`);
+            } else {
+              core.setOutput("mailcontext", 
+                `Subject: Webhook Success\n\nWebhook for commit ${context.sha} delivered successfully in ${latest.duration} ms.`);
+            }
+
+      - name: Print mail context
+        run: echo "${{ steps.check-webhook.outputs.mailcontext }}"
