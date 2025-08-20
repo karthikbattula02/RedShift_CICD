@@ -12,7 +12,7 @@ jobs:
       - name: Setup GitHub CLI
         run: |
           sudo apt-get install -y gh
-          echo "${{ secrets.WEBHOOK_PAT }}" | gh auth login --with-token
+          echo "${{ secrets.WEBHOOK_PAT2 }}" | gh auth login --with-token
 
       - name: Check webhook and redeliver if failed
         id: check-webhook
