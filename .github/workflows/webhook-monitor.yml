@@ -1,48 +1,95 @@
-name: Monitor Webhook Failures
-
+name: Monitor Webhooks
+ 
 on:
-  workflow_dispatch:   # allow manual run
+
   push:
-    branches:
-      - main
 
+    branches: [main]
+ 
 jobs:
+
   check-webhook:
+
     runs-on: ubuntu-latest
+
     steps:
-      - name: Check webhook delivery status
+
+      - name: Check webhook delivery
+
         id: check-webhook
+
         uses: actions/github-script@v6
+
         with:
+
           github-token: ${{ secrets.WEBHOOK_PAT }}
+
           script: |
-            const repo = context.repo.repo;
+
             const owner = context.repo.owner;
+
+            const repo = context.repo.repo;
+
+            const hookId = 558736907;
+ 
             const { data: deliveries } = await github.request(
+
               "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries",
-              {
-                owner,
-                repo,
-                hook_id: process.env.WEBHOOK_ID
-              }
+
+              { owner, repo, hook_id: hookId }
+
             );
-
+ 
             const latest = deliveries[0];
-            const status = latest?.status || "unknown";
-            const message = `Webhook delivery ${latest?.id} status: ${status}`;
 
-            core.setOutput("status", status);
-            core.setOutput("mail_context", message);
+            console.log("Latest delivery:", latest);
+ 
+            let mail_context = "";
+ 
+            if (latest.status === "timed_out") {
 
+              console.log(`Webhook delivery ${latest.id} timed out. Retrying...`);
+
+              await github.request(
+
+                "POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts",
+
+                { owner, repo, hook_id: hookId, delivery_id: latest.id }
+
+              );
+
+              mail_context = `Redelivery triggered for ${latest.id}`;
+
+            } else {
+
+              mail_context = `Webhook delivery ${latest.id} status: ${latest.status}`;
+
+            }
+ 
+            // Export value to be used in next step
+
+            core.setOutput("mail_context", mail_context);
+ 
       - name: Send mail
-        if: ${{ steps.check-webhook.outputs.status != 'ok' }}
+
         uses: dawidd6/action-send-mail@v3
+
         with:
+
           server_address: smtp.gmail.com
+
           server_port: 465
+
           username: ${{ secrets.EMAIL_USERNAME }}
+
           password: ${{ secrets.EMAIL_PASSWORD }}
+
           subject: "GitHub Workflow Notification"
+
           to: "photoskarthik2@gmail.com"
+
           from: "karthikknvamma@gmail.com"
+
           body: ${{ steps.check-webhook.outputs.mail_context }}
+
+ 
