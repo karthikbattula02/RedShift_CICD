@@ -1,6 +1,7 @@
 name: Monitor Webhook Failures
 
 on:
+  workflow_dispatch:   # allow manual run
   push:
     branches:
       - main
@@ -8,10 +9,6 @@ on:
 jobs:
   check-webhook:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      repository-hooks: write   # ✅ correct spelling
-
     steps:
       - name: Check webhook delivery status
         id: check-webhook
@@ -19,32 +16,33 @@ jobs:
         with:
           github-token: ${{ secrets.WEBHOOK_PAT }}
           script: |
-            const { data: hooks } = await github.rest.repos.listWebhooks({
-              owner: context.repo.owner,
-              repo: context.repo.repo
-            });
-
-            if (hooks.length === 0) {
-              core.setFailed("❌ No webhooks found for this repo");
-            } else {
-              const hook = hooks[0]; // first webhook
-              const deliveries = await github.rest.repos.listWebhookDeliveries({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                hook_id: hook.id
-              });
-
-              if (deliveries.data.length === 0) {
-                core.setFailed("❌ No deliveries found for webhook");
-              } else {
-                const last = deliveries.data[0];
-                core.info(`🔍 Last delivery status: ${last.status}`);
-
-                // ✅ "not equals to" condition
-                if (last.status !== "OK") {
-                  core.setFailed(`❌ Webhook delivery failed (status: ${last.status})`);
-                } else {
-                  core.info("✅ Webhook delivered successfully");
-                }
+            const repo = context.repo.repo;
+            const owner = context.repo.owner;
+            const { data: deliveries } = await github.request(
+              "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries",
+              {
+                owner,
+                repo,
+                hook_id: process.env.WEBHOOK_ID
               }
-            }
+            );
+
+            const latest = deliveries[0];
+            const status = latest?.status || "unknown";
+            const message = `Webhook delivery ${latest?.id} status: ${status}`;
+
+            core.setOutput("status", status);
+            core.setOutput("mail_context", message);
+
+      - name: Send mail
+        if: ${{ steps.check-webhook.outputs.status != 'ok' }}
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "GitHub Workflow Notification"
+          to: "photoskarthik2@gmail.com"
+          from: "karthikknvamma@gmail.com"
+          body: ${{ steps.check-webhook.outputs.mail_context }}
