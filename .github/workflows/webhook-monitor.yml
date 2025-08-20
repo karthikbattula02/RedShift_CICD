@@ -26,13 +26,13 @@ jobs:
             });
 
             if (hooks.data.length === 0) {
-              core.setOutput("mail_body", "No webhooks found in the repo.");
+              core.setOutput("mail_body", "⚠️ No webhooks found in the repo.");
               return;
             }
 
             const hookId = hooks.data[0].id;
 
-            // Get deliveries for the hook
+            // Get last 5 deliveries
             const deliveries = await github.request(
               `GET /repos/${owner}/${repo}/hooks/${hookId}/deliveries`,
               { per_page: 5 }
@@ -41,7 +41,7 @@ jobs:
             let resultMsg = "";
             for (const delivery of deliveries.data) {
               if (delivery.status_code !== 200) {
-                // Redeliver
+                // Re-deliver failed webhook
                 await github.request(
                   `POST /repos/${owner}/${repo}/hooks/${hookId}/deliveries/${delivery.id}/attempts`
                 );
@@ -51,16 +51,17 @@ jobs:
               }
             }
 
-            core.setOutput("mail_body", resultMsg);
+            core.setOutput("mail_body", resultMsg || "No deliveries found.");
 
       - name: Send email
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 465
+          secure: true
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
           subject: "GitHub Webhook Delivery Report"
           to: "photoskarthik2@gmail.com"
-          from: "GitHub Actions <${{ secrets.EMAIL_USER }}>"
+          from: ${{ secrets.EMAIL_USERNAME }}
           body: ${{ steps.check-webhook.outputs.mail_body }}
