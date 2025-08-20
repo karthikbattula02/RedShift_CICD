@@ -29,7 +29,7 @@ jobs:
             let mail_context = "";
 
             if (latest.status != "ok") {
-              console.log(`Webhook delivery ${latest.id} timed out. Retrying...`);
+              console.log(`Webhook delivery ${latest.id} not ok. Retrying...`);
               await github.request(
                 "POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts",
                 { owner, repo, hook_id: hookId, delivery_id: latest.id }
@@ -43,12 +43,13 @@ jobs:
             core.setOutput("mail_context", mail_context);
 
       - name: Send mail
+        if: steps.check-webhook.outputs.mail_context != 'Webhook delivery ${latest.id} status: ok'
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 465
           username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }} # fixed secret name
+          password: ${{ secrets.EMAIL_PASSWORD }}
           subject: "GitHub Workflow Notification"
           to: "photoskarthik2@gmail.com"
           from: "karthikknvamma@gmail.com"
