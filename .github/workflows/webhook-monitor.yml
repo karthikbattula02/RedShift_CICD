@@ -39,11 +39,12 @@ jobs:
               mail_context = `Webhook delivery ${latest.id} status: ${latest.status}`;
             }
 
-            // Export value to be used in next step
+            // Export values
             core.setOutput("mail_context", mail_context);
+            core.setOutput("status", latest.status);
 
       - name: Send mail
-        if: steps.check-webhook.outputs.mail_context != 'Webhook delivery ${latest.id} status: ok'
+        if: steps.check-webhook.outputs.status != 'ok'
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
