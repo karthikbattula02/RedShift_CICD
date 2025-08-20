@@ -1,57 +1,50 @@
-name: Monitor Webhooks
+name: Monitor Webhook Failures
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
 
 jobs:
   check-webhook:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      repository-hooks: write   # ✅ correct spelling
+
     steps:
-      - name: Check webhook delivery
+      - name: Check webhook delivery status
         id: check-webhook
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.WEBHOOK_PAT }}
           script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const hookId = 558736907;
+            const { data: hooks } = await github.rest.repos.listWebhooks({
+              owner: context.repo.owner,
+              repo: context.repo.repo
+            });
 
-            const { data: deliveries } = await github.request(
-              "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries",
-              { owner, repo, hook_id: hookId }
-            );
-
-            const latest = deliveries[0];
-            console.log("Latest delivery:", latest);
-
-            let mail_context = "";
-
-            if (latest.status != "ok") {
-              console.log(`Webhook delivery ${latest.id} not ok. Retrying...`);
-              await github.request(
-                "POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts",
-                { owner, repo, hook_id: hookId, delivery_id: latest.id }
-              );
-              mail_context = `Redelivery triggered for ${latest.id}`;
+            if (hooks.length === 0) {
+              core.setFailed("❌ No webhooks found for this repo");
             } else {
-              mail_context = `Webhook delivery ${latest.id} status: ${latest.status}`;
+              const hook = hooks[0]; // first webhook
+              const deliveries = await github.rest.repos.listWebhookDeliveries({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                hook_id: hook.id
+              });
+
+              if (deliveries.data.length === 0) {
+                core.setFailed("❌ No deliveries found for webhook");
+              } else {
+                const last = deliveries.data[0];
+                core.info(`🔍 Last delivery status: ${last.status}`);
+
+                // ✅ "not equals to" condition
+                if (last.status !== "OK") {
+                  core.setFailed(`❌ Webhook delivery failed (status: ${last.status})`);
+                } else {
+                  core.info("✅ Webhook delivered successfully");
+                }
+              }
             }
-
-            // Export values
-            core.setOutput("mail_context", mail_context);
-            core.setOutput("status", latest.status);
-
-      - name: Send mail
-        if: steps.check-webhook.outputs.status != 'ok'
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "GitHub Workflow Notification"
-          to: "photoskarthik2@gmail.com"
-          from: "karthikknvamma@gmail.com"
-          body: ${{ steps.check-webhook.outputs.mail_context }}
