@@ -28,7 +28,7 @@ jobs:
 
             let mail_context = "";
 
-            if (latest.status === "timed_out") {
+            if (latest.status != "ok") {
               console.log(`Webhook delivery ${latest.id} timed out. Retrying...`);
               await github.request(
                 "POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts",
