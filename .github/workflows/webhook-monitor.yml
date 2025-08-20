@@ -1,17 +1,13 @@
-name: Monitor Webhook Delivery
+name: Check Webhook and Redeliver
 
 on:
-  workflow_dispatch:   # manual trigger for testing
-  push:
-    branches:
-      - main
+  workflow_dispatch:  # Run manually, you can change to push if needed
 
 jobs:
   check-webhook:
     runs-on: ubuntu-latest
     steps:
-      - name: Check webhook delivery status
-        id: check-webhook
+      - name: Check webhook deliveries
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.WEBHOOK_PAT }}
@@ -19,50 +15,47 @@ jobs:
             const repo = context.repo.repo;
             const owner = context.repo.owner;
 
-            // Fetch webhook deliveries
-            const { data: hooks } = await github.rest.repos.listWebhooks({
+            // Get all hooks
+            const hooks = await github.request("GET /repos/{owner}/{repo}/hooks", {
               owner,
               repo
             });
 
-            if (!hooks.length) {
-              core.setFailed("No webhooks found in this repository.");
-              return;
-            }
+            for (const hook of hooks.data) {
+              console.log(`🔍 Checking Hook: ${hook.id}`);
 
-            const hookId = hooks[0].id;
-            const { data: deliveries } = await github.request(
-              `GET /repos/${owner}/${repo}/hooks/${hookId}/deliveries`
-            );
-
-            if (!deliveries.length) {
-              core.setFailed("No deliveries found for webhook " + hookId);
-              return;
-            }
-
-            const lastDelivery = deliveries[0];
-            console.log("Last Delivery Status:", lastDelivery.response.status);
-
-            if (lastDelivery.response.status !== 200) {
-              console.log("Redelivering webhook...");
-              await github.request(
-                `POST /repos/${owner}/${repo}/hooks/${hookId}/deliveries/${lastDelivery.id}/attempts`
+              // Get last deliveries
+              const deliveries = await github.request(
+                "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries",
+                { owner, repo, hook_id: hook.id }
               );
-              core.setOutput("deliveryStatus", "Failed - Retried");
-            } else {
-              core.setOutput("deliveryStatus", "Success");
-            }
 
-      - name: Send notification mail
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: Webhook Delivery Report
-          to: photoskarthik2@gmail.com
-          from: GitHub Actions <${{ secrets.EMAIL_USER }}>
-          body: |
-            Webhook delivery check completed.
-            Status: ${{ steps.check-webhook.outputs.deliveryStatus }}
+              for (const delivery of deliveries.data) {
+                console.log(`➡️ Delivery ID: ${delivery.id}, Status: ${delivery.status}, Code: ${delivery.response?.status || "N/A"}`);
+
+                // Check for timeout or non-200 status
+                if (delivery.status === "timed_out" || (delivery.response && delivery.response.status !== 200)) {
+                  console.log(`⚠️ Found failed delivery ${delivery.id}, redelivering...`);
+
+                  try {
+                    const redeliverResp = await github.request(
+                      "POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts",
+                      {
+                        owner,
+                        repo,
+                        hook_id: hook.id,
+                        delivery_id: delivery.id
+                      }
+                    );
+
+                    if (redeliverResp.status === 202) {
+                      console.log(`✅ [MAIL CONTEXT] Webhook delivery ${delivery.id} re-delivered successfully!`);
+                    } else {
+                      console.log(`❌ [MAIL CONTEXT] Webhook delivery ${delivery.id} re-delivery failed with status ${redeliverResp.status}`);
+                    }
+                  } catch (err) {
+                    console.log(`❌ [MAIL CONTEXT] Webhook delivery ${delivery.id} re-delivery failed. Error: ${err.message}`);
+                  }
+                }
+              }
+            }
