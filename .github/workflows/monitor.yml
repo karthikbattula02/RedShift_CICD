@@ -29,17 +29,17 @@ jobs:
               const latest = deliveries[0];
               console.log("Latest delivery:", latest);
 
-              let code = latest?.response?.code ?? 'no-response';
+              let code = latest.status_code;
+              let status = latest.status;
 
-              if (code !== 200) {
-                console.log(`Webhook delivery ${latest.id} returned code ${code}. Retrying...`);
+              if (status !== "OK" || code !== 200) {
+                console.log(`Webhook delivery ${latest.id} returned status "${status}" and code ${code}. Retrying...`);
 
                 await github.request(
                   "POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts",
                   { owner, repo, hook_id: hookId, delivery_id: latest.id }
                 );
 
-                // Wait a few seconds before checking again
                 await new Promise(resolve => setTimeout(resolve, 5000));
 
                 const { data: updatedDeliveries } = await github.request(
@@ -50,7 +50,10 @@ jobs:
                 const redelivery = updatedDeliveries[0];
                 console.log("Redelivery result:", redelivery);
 
-                code = redelivery?.response?.code ?? 'no-response';
+                code = redelivery.status_code;
+                status = redelivery.status;
+              } else {
+                console.log(`Webhook delivery ${latest.id} succeeded with code ${code}`);
               }
 
               core.setOutput("code", code);
