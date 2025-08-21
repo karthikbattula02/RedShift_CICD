@@ -8,9 +8,9 @@ jobs:
   check-webhook:
     runs-on: ubuntu-latest
     outputs:
-      webhook_status: ${{ steps.check.outputs.status }}
+      final_status: ${{ steps.check.outputs.final_status }}
     steps:
-      - name: Check webhook delivery
+      - name: Check and Redeliver Webhook if Needed
         id: check
         uses: actions/github-script@v6
         with:
@@ -20,6 +20,7 @@ jobs:
             const repo = context.repo.repo;
             const hookId = 558736907;
 
+            // Fetch latest delivery
             const { data: deliveries } = await github.request(
               "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries",
               { owner, repo, hook_id: hookId }
@@ -28,18 +29,31 @@ jobs:
             const latest = deliveries[0];
             console.log("Latest delivery:", latest);
 
-            core.setOutput("status", latest.status);
+            let finalStatus = latest.status;
 
-            if (latest.status === "timed_out") {
-              console.log(`Webhook delivery ${latest.id} timed out. Retrying...`);
+            // If not OK, retry delivery
+            if (latest.status !== "ok") {
+              console.log(`Webhook delivery ${latest.id} failed (${latest.status}). Retrying...`);
               await github.request(
                 "POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts",
                 { owner, repo, hook_id: hookId, delivery_id: latest.id }
               );
-              console.log(`Redelivery triggered for ${latest.id}`);
-            } else {
-              console.log(`Webhook delivery ${latest.id} status: ${latest.status}`);
+
+              // Wait for GitHub to process redelivery
+              await new Promise(r => setTimeout(r, 5000));
+
+              // Get latest delivery again
+              const { data: redeliveries } = await github.request(
+                "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries",
+                { owner, repo, hook_id: hookId }
+              );
+
+              const newLatest = redeliveries[0];
+              console.log("After redelivery:", newLatest);
+              finalStatus = newLatest.status;
             }
+
+            core.setOutput("final_status", finalStatus);
 
   send-email:
     needs: check-webhook
@@ -52,13 +66,13 @@ jobs:
           server_port: 465
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "GitHub Workflow Notification"
+          subject: "GitHub Webhook Status Notification"
           body: |
-            Webhook status: ${{ needs.check-webhook.outputs.webhook_status }}
+            Final Webhook Status: ${{ needs.check-webhook.outputs.final_status }}
 
-            - Repo: ${{ github.repository }}
-            - Commit: ${{ github.sha }}
-            - Branch: ${{ github.ref }}
+            Repository: ${{ github.repository }}
+            Commit SHA: ${{ github.sha }}
+            Branch: ${{ github.ref }}
 
           to: photoskarthik2@gmail.com
           from: ${{ secrets.EMAIL_USERNAME }}
