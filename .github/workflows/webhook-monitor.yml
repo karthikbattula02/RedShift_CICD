@@ -44,43 +44,50 @@ jobs:
 
             const latest = deliveries.data[0];
 
-            // Log initial delivery status
-            console.log("🔔 Webhook Delivery Check:");
-            console.log(`Repository: ${owner}/${repo}`);
-            console.log(`Commit SHA: ${process.env.sha}`);
-            console.log(`Commit Message: ${process.env.msg}`);
-            console.log(`Webhook ID: ${hookId}`);
-            console.log(`Delivery ID: ${latest.id}`);
-            console.log(`Status: ${latest.status}`);
-            console.log(`Response Code: ${latest.response?.status_code || "N/A"}`);
+            // --- First Check ---
+            if (latest.status === "ok") {
+              console.log("✅ Webhook delivered successfully (first attempt).");
+              console.log(`Repository: ${owner}/${repo}`);
+              console.log(`Commit SHA: ${process.env.sha}`);
+              console.log(`Commit Message: ${process.env.msg}`);
+              console.log(`Webhook ID: ${hookId}`);
+              console.log(`Delivery ID: ${latest.id}`);
+              console.log(`Response Code: ${latest.response?.status_code || "N/A"}`);
+              return;
+            }
 
-            // If not ok → redeliver and re-check
-            if (latest.status !== "ok") {
-              console.log("⚠️ Webhook delivery failed, attempting redelivery...");
+            // --- Redeliver if failed ---
+            console.log("⚠️ First attempt failed, retrying delivery...");
 
-              // Redeliver
-              await github.request("POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts", {
-                owner, repo, hook_id: hookId, delivery_id: latest.id
-              });
+            await github.request(
+              "POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts",
+              { owner, repo, hook_id: hookId, delivery_id: latest.id }
+            );
 
-              // Wait 5 seconds before re-checking
-              await new Promise(r => setTimeout(r, 5000));
+            // Wait a few seconds before checking again
+            await new Promise(resolve => setTimeout(resolve, 5000));
 
-              // Fetch deliveries again
-              const { data: redeliveries } = await github.request(
-                "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries",
-                { owner, repo, hook_id: hookId }
-              );
+            const redeliveries = await github.request("GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries", {
+              owner, repo, hook_id: hookId
+            });
 
-              const retried = redeliveries[0];
-              console.log("🔄 After Redelivery Check:");
+            const retried = redeliveries.data.find(d => d.id === latest.id);
+
+            if (retried && retried.status === "ok") {
+              console.log("✅ Webhook delivered successfully after redelivery.");
+              console.log(`Repository: ${owner}/${repo}`);
+              console.log(`Commit SHA: ${process.env.sha}`);
+              console.log(`Commit Message: ${process.env.msg}`);
+              console.log(`Webhook ID: ${hookId}`);
               console.log(`Delivery ID: ${retried.id}`);
-              console.log(`Status: ${retried.status}`);
               console.log(`Response Code: ${retried.response?.status_code || "N/A"}`);
-
-              if (retried.status !== "ok") {
-                core.setFailed("❌ Webhook still failing after redelivery.");
-              }
             } else {
-              console.log("✅ Webhook delivery OK, no redelivery needed.");
+              console.log("❌ Webhook failed again after redelivery.");
+              console.log(`Repository: ${owner}/${repo}`);
+              console.log(`Commit SHA: ${process.env.sha}`);
+              console.log(`Commit Message: ${process.env.msg}`);
+              console.log(`Webhook ID: ${hookId}`);
+              console.log(`Delivery ID: ${latest.id}`);
+              console.log(`Status: ${retried?.status || "unknown"}`);
+              console.log(`Response Code: ${retried?.response?.status_code || "N/A"}`);
             }
