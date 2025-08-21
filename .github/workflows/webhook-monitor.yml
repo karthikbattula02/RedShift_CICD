@@ -1,124 +1,79 @@
 name: Monitor Webhooks
- 
+
 on:
-
   push:
-
     branches: [main]
- 
+
 jobs:
-
   check-webhook:
-
     runs-on: ubuntu-latest
- 
+
     steps:
-
       - name: Setup GitHub CLI
+        run: sudo apt-get install -y gh jq
 
-        run: |
-
-          sudo apt-get install -y gh
-
-          echo "${{ secrets.WEBHOOK_PAT2 }}"
- 
       - name: Check webhook and redeliver if failed
-
         id: check-webhook
-
+        env:
+          GH_TOKEN: ${{ secrets.WEBHOOK_PAT2 }}   # ✅ use your PAT here
         run: |
-
           owner="${GITHUB_REPOSITORY%/*}"
-
           repo="${GITHUB_REPOSITORY#*/}"
-
           hookId=558736907
- 
+
+          echo "Checking latest webhook delivery for $owner/$repo (hook=$hookId)..."
+
           # Get latest delivery
-
           latest=$(gh api \
-
             -H "Accept: application/vnd.github+json" \
-
             /repos/$owner/$repo/hooks/$hookId/deliveries | jq '.[0]')
- 
+
           delivery_id=$(echo "$latest" | jq -r '.id')
-
           status=$(echo "$latest" | jq -r '.status')
-
           response_code=$(echo "$latest" | jq -r '.response.status_code')
- 
-          mail_context="Webhook delivery $delivery_id status: $status ($response_code)"
- 
+
+          mail_context="Webhook delivery $delivery_id status=$status (response=$response_code)"
+
           if [[ "$response_code" != "200" ]]; then
+            echo "Delivery $delivery_id failed (status=$response_code). Retrying once..."
 
-            echo "Delivery $delivery_id failed (status: $response_code). Retrying..."
- 
             # Trigger redelivery with gh api
-
             gh api \
-
               --method POST \
-
               -H "Accept: application/vnd.github+json" \
-
               /repos/$owner/$repo/hooks/$hookId/deliveries/$delivery_id/attempts
- 
+
             echo "Waiting 10s before checking again..."
-
             sleep 10
- 
+
             # Get latest delivery again
-
             retried=$(gh api \
-
               -H "Accept: application/vnd.github+json" \
-
               /repos/$owner/$repo/hooks/$hookId/deliveries | jq '.[0]')
- 
+
             retry_id=$(echo "$retried" | jq -r '.id')
-
             retry_status=$(echo "$retried" | jq -r '.status')
-
             retry_response=$(echo "$retried" | jq -r '.response.status_code')
- 
+
             if [[ "$retry_response" == "200" ]]; then
-
               mail_context="✅ Webhook delivery $retry_id succeeded after retry."
-
             else
-
-              mail_context="❌ Webhook delivery $retry_id failed after retry (status: $retry_status, response: $retry_response)."
-
+              mail_context="❌ Webhook delivery $retry_id failed after retry (status=$retry_status, response=$retry_response)."
             fi
-
           else
-
             mail_context="✅ Webhook delivery $delivery_id succeeded with status 200."
-
           fi
- 
+
           echo "mail_context=$mail_context" >> $GITHUB_OUTPUT
- 
+
       - name: Send mail
-
         uses: dawidd6/action-send-mail@v3
-
         with:
-
           server_address: smtp.gmail.com
-
           server_port: 465
-
           username: ${{ secrets.EMAIL_USERNAME }}
-
           password: ${{ secrets.EMAIL_PASSWORD }}
-
           subject: "GitHub Webhook Delivery Status"
-
           to: "photoskarthik2@gmail.com"
-
           from: "karthikknvamma@gmail.com"
-
           body: ${{ steps.check-webhook.outputs.mail_context }}
- 
