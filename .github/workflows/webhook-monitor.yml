@@ -44,18 +44,43 @@ jobs:
 
             const latest = deliveries.data[0];
 
-            // Log everything to console
+            // Log initial delivery status
             console.log("🔔 Webhook Delivery Check:");
             console.log(`Repository: ${owner}/${repo}`);
             console.log(`Commit SHA: ${process.env.sha}`);
             console.log(`Commit Message: ${process.env.msg}`);
             console.log(`Webhook ID: ${hookId}`);
             console.log(`Delivery ID: ${latest.id}`);
-            console.log(`Status: ${latest.status}`);                // OK, failed, etc.
-            console.log(`Response Code: ${latest.response?.status_code || "N/A"}`); // 200, 404, timeout, etc.
+            console.log(`Status: ${latest.status}`);
+            console.log(`Response Code: ${latest.response?.status_code || "N/A"}`);
 
-            // Export outputs if you want to use them later
-            core.setOutput("status", latest.status);
-            core.setOutput("response_code", latest.response?.status_code || "N/A");
-            core.setOutput("hook_id", hookId);
-            core.setOutput("delivery_id", latest.id);
+            // If not ok → redeliver and re-check
+            if (latest.status !== "ok") {
+              console.log("⚠️ Webhook delivery failed, attempting redelivery...");
+
+              // Redeliver
+              await github.request("POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts", {
+                owner, repo, hook_id: hookId, delivery_id: latest.id
+              });
+
+              // Wait 5 seconds before re-checking
+              await new Promise(r => setTimeout(r, 5000));
+
+              // Fetch deliveries again
+              const { data: redeliveries } = await github.request(
+                "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries",
+                { owner, repo, hook_id: hookId }
+              );
+
+              const retried = redeliveries[0];
+              console.log("🔄 After Redelivery Check:");
+              console.log(`Delivery ID: ${retried.id}`);
+              console.log(`Status: ${retried.status}`);
+              console.log(`Response Code: ${retried.response?.status_code || "N/A"}`);
+
+              if (retried.status !== "ok") {
+                core.setFailed("❌ Webhook still failing after redelivery.");
+              }
+            } else {
+              console.log("✅ Webhook delivery OK, no redelivery needed.");
+            }
