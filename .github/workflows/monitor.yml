@@ -9,8 +9,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Setup GitHub CLI
-        run: sudo apt-get install -y gh jq
 
       - name: Check webhook and redeliver if failed
         id: check-webhook
