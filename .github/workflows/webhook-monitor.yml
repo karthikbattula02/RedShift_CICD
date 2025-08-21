@@ -19,43 +19,43 @@ jobs:
       # 2️⃣ Check webhook and redeliver if failed
       - name: Check webhook and redeliver
         id: check-webhook
+        env:
+          GH_TOKEN: ${{ secrets.WEBHOOK_PAT2 }}  # Make GH_TOKEN available to gh CLI
         run: |
           owner="${GITHUB_REPOSITORY%/*}"
           repo="${GITHUB_REPOSITORY#*/}"
           hookId=558736907
-
+      
           # Get latest delivery
           latest=$(gh api \
             -H "Accept: application/vnd.github+json" \
             /repos/$owner/$repo/hooks/$hookId/deliveries | jq '.[0]')
-
+      
           delivery_id=$(echo "$latest" | jq -r '.id')
           status=$(echo "$latest" | jq -r '.status')
           response_code=$(echo "$latest" | jq -r '.response.status_code')
-
+      
           mail_context="Webhook delivery $delivery_id status: $status ($response_code)"
-
+      
           if [[ "$response_code" != "200" ]]; then
             echo "Delivery $delivery_id failed (status: $response_code). Retrying..."
-            
-            # Trigger redelivery
+      
             gh api \
               --method POST \
               -H "Accept: application/vnd.github+json" \
               /repos/$owner/$repo/hooks/$hookId/deliveries/$delivery_id/attempts
-
+      
             echo "Waiting 10s before checking again..."
             sleep 10
-
-            # Get latest delivery after retry
+      
             retried=$(gh api \
               -H "Accept: application/vnd.github+json" \
               /repos/$owner/$repo/hooks/$hookId/deliveries | jq '.[0]')
-
+      
             retry_id=$(echo "$retried" | jq -r '.id')
             retry_status=$(echo "$retried" | jq -r '.status')
             retry_response=$(echo "$retried" | jq -r '.response.status_code')
-
+      
             if [[ "$retry_response" == "200" ]]; then
               mail_context="✅ Webhook delivery $retry_id succeeded after retry."
             else
@@ -64,8 +64,9 @@ jobs:
           else
             mail_context="✅ Webhook delivery $delivery_id succeeded with status 200."
           fi
-
+      
           echo "mail_context=$mail_context" >> $GITHUB_OUTPUT
+
 
       # 3️⃣ Send email with delivery status
       - name: Send mail
