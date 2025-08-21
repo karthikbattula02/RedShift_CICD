@@ -49,7 +49,7 @@ jobs:
 
           retried=$(gh api \
             -H "Accept: application/vnd.github+json" \
-            /repos/$owner/$repo/hooks/$hookId/deliveries | jq '.[0]')
+            /repos/$owner/$repo/hooks/$hookId | jq '.[0]')
 
           retry_id=$(echo "$retried" | jq -r '.id')
           retry_status=$(echo "$retried" | jq -r '.status')
