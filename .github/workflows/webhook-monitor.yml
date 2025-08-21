@@ -9,6 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       final_status: ${{ steps.check.outputs.final_status }}
+      send_email: ${{ steps.check.outputs.send_email }}
     steps:
       - name: Check and Redeliver Webhook if Needed
         id: check
@@ -16,7 +17,6 @@ jobs:
         with:
           github-token: ${{ secrets.WEBHOOK_PAT2 }}
           script: |
-            const core = require('@actions/core');
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const hookId = 558736907;
@@ -43,6 +43,7 @@ jobs:
                 { owner, repo, hook_id: hookId, delivery_id: latest.id }
               );
 
+              // Wait a few seconds for redelivery to complete
               await new Promise(r => setTimeout(r, 5000));
 
               const { data: redeliveries } = await github.request(
