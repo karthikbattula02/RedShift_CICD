@@ -1,30 +1,35 @@
 name: Monitor Webhooks
- 
+
 on:
   push:
     branches: [main]
- 
+
 jobs:
   check-webhook:
     runs-on: ubuntu-latest
+    outputs:
+      webhook_status: ${{ steps.check.outputs.status }}
     steps:
       - name: Check webhook delivery
+        id: check
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.WEBHOOK_PAT }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const hookId = 558736907
- 
+            const hookId = 558736907;
+
             const { data: deliveries } = await github.request(
               "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries",
               { owner, repo, hook_id: hookId }
             );
- 
+
             const latest = deliveries[0];
             console.log("Latest delivery:", latest);
- 
+
+            core.setOutput("status", latest.status);
+
             if (latest.status === "timed_out") {
               console.log(`Webhook delivery ${latest.id} timed out. Retrying...`);
               await github.request(
@@ -35,3 +40,26 @@ jobs:
             } else {
               console.log(`Webhook delivery ${latest.id} status: ${latest.status}`);
             }
+
+  send-email:
+    needs: check-webhook
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "GitHub Workflow Notification"
+          body: |
+            Webhook status: ${{ needs.check-webhook.outputs.webhook_status }}
+
+            - Repo: ${{ github.repository }}
+            - Commit: ${{ github.sha }}
+            - Branch: ${{ github.ref }}
+
+          to: photoskarthik2@gmail.com
+          from: ${{ secrets.EMAIL_USERNAME }}
+          secure: true
