@@ -15,19 +15,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.WEBHOOK_PAT2 }}
         run: |
-          owner="${GITHUB_REPOSITORY%/*}"
-          repo="${GITHUB_REPOSITORY#*/}"
+          owner="karthikbattula"
+          repo="RedShift_CICD"
           hookId=558736907
 
           echo "Checking latest webhook delivery for $owner/$repo (hook=$hookId)..."
 
           latest=$(gh api \
             -H "Accept: application/vnd.github+json" \
-            /repos/$owner/$repo/hooks/$hookId/deliveries | jq '.[0]')
+            /repos/$owner/$repo/hooks/$hookId | jq '.')
 
-          delivery_id=$(echo "$latest" | jq -r '.id')
-          status=$(echo "$latest" | jq -r '.status')
-          response_code=$(echo "$latest" | jq -r '.response.status_code')
+          delivery_id=$(echo "$latest" | jq -r '.last_response.id')
+          status=$(echo "$latest" | jq -r '.last_response.status')
+          response_code=$(echo "$latest" | jq -r '.last_response.code')
 
           echo "Latest delivery: id=$delivery_id, status=$status, response=$response_code"
 
@@ -49,11 +49,11 @@ jobs:
 
           retried=$(gh api \
             -H "Accept: application/vnd.github+json" \
-            /repos/$owner/$repo/hooks/$hookId | jq '.[0]')
+            /repos/$owner/$repo/hooks/$hookId | jq '.')
 
-          retry_id=$(echo "$retried" | jq -r '.id')
-          retry_status=$(echo "$retried" | jq -r '.status')
-          retry_response=$(echo "$retried" | jq -r '.response.status_code')
+          retry_id=$(echo "$retried" | jq -r '.last_response.id')
+          retry_status=$(echo "$retried" | jq -r '.last_response.status')
+          retry_response=$(echo "$retried" | jq -r '.last_response.code')
 
           echo "Retry delivery: id=$retry_id, status=$retry_status, response=$retry_response"
 
