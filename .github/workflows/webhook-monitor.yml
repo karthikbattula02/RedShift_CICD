@@ -1,85 +1,81 @@
+all done but doubt abt 2 pushes at a time
 name: Monitor Webhooks
 
 on:
   push:
+    branches: [main]
 
 jobs:
   check-webhook:
     runs-on: ubuntu-latest
     steps:
-      - name: Check webhook delivery for this commit
-        id: check
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Get latest commit info
+        id: commit_info
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_ENV
+          echo "msg=$(git log -1 --pretty=%B)" >> $GITHUB_ENV
+
+      - name: Check webhook delivery
+        id: webhook_status
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.WEBHOOK_PAT2 }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const commitSha = context.sha;
-            const commitMsg = context.payload.head_commit.message;
-
-            console.log(`🔎 Checking webhook delivery for commit: ${commitSha}`);
-            console.log(`💬 Commit message: ${commitMsg}`);
 
             const hooks = await github.request("GET /repos/{owner}/{repo}/hooks", { owner, repo });
-            if (!hooks.data.length) throw new Error("No webhooks found in this repo!");
+            if (!hooks.data.length) {
+              core.setFailed("❌ No webhooks found in this repo");
+              return;
+            }
 
-            const hook = hooks.data.find(h => h.config.url.includes("https://1bf2a1a33060.ngrok-free.app/github-webhook/"));
-            if (!hook) throw new Error("No matching webhook found!");
-            const hookId = hook.id;
-
-            let deliveries = await github.request("GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries", {
+            const hookId = hooks.data[0].id;
+            const deliveries = await github.request("GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries", {
               owner, repo, hook_id: hookId
             });
 
-            let delivery = deliveries.data.find(d =>
-              d.request && d.request.payload && d.request.payload.head_commit?.id === commitSha
-            );
+            if (!deliveries.data.length) {
+              core.setFailed("❌ No deliveries found for webhook " + hookId);
+              return;
+            }
 
-            if (!delivery) {
-              console.log("⚠️ Delivery not found. Attempting redelivery...");
+            let latest = deliveries.data[0];
 
-              // Redeliver the last delivery
-              if (deliveries.data.length > 0) {
-                const lastDelivery = deliveries.data[0];
-                await github.request("POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts", {
-                  owner, repo, hook_id: hookId, delivery_id: lastDelivery.id
-                });
-                console.log("🔁 Redelivery requested. Waiting 5 seconds...");
-                await new Promise(r => setTimeout(r, 5000));
+            if (latest.status !== "ok") {
+              console.log("⚠️ First attempt failed, retrying delivery...");
+              await github.request("POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts", {
+                owner, repo, hook_id: hookId, delivery_id: latest.id
+              });
 
-                deliveries = await github.request("GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries", {
-                  owner, repo, hook_id: hookId
-                });
+              // Refetch after retry
+              const retried = await github.request("GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries", {
+                owner, repo, hook_id: hookId
+              });
+              latest = retried.data[0];
 
-                delivery = deliveries.data.find(d =>
-                  d.request && d.request.payload && d.request.payload.head_commit?.id === commitSha
-                );
+              if (latest.status !== "ok") {
+                console.log("❌ Webhook failed again after redelivery.");
+                console.log(`Repository: ${owner}/${repo}`);
+                console.log(`Commit SHA: ${process.env.sha}`);
+                console.log(`Commit Message: ${process.env.msg}`);
+                console.log(`Webhook ID: ${hookId}`);
+                console.log(`Delivery ID: ${latest.id}`);
+                console.log(`Status: ${latest.status}`);
+                console.log(`Response Code: ${latest.response?.status_code || "N/A"}`);
+                return;
               }
             }
 
-            const finalStatus = delivery?.status || "not found";
-            console.log(`📦 Final webhook status for commit: ${finalStatus}`);
-
-            if (!delivery || delivery.status !== "ok") {
-              core.setFailed(`❌ Webhook failed or not delivered for commit ${commitSha} (status: ${finalStatus})`);
-            }
-
-      - name: Send mail on failure
-        if: failure()
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 587
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "❌ Webhook failed for commit ${{ github.sha }}"
-          to: photoskarthik2@gmail.com
-          from: GitHub Actions <${{ secrets.MAIL_USERNAME }}>
-          body: |
-            Webhook failed or not delivered.
-
-            📌 Repository: ${{ github.repository }}
-            🔗 Commit SHA: ${{ github.sha }}
-            💬 Commit Message: ${{ github.event.head_commit.message }}
-            📦 Webhook final status: ${finalStatus}
+            // Success case
+            console.log("✅ Webhook delivered successfully.");
+            console.log(`Repository: ${owner}/${repo}`);
+            console.log(`Commit SHA: ${process.env.sha}`);
+            console.log(`Commit Message: ${process.env.msg}`);
+            console.log(`Webhook ID: ${hookId}`);
+            console.log(`Delivery ID: ${latest.id}`);
+            console.log(`Status: ${latest.status}`);
+            console.log(`Response Code: ${latest.response?.status_code || "N/A"}`);
