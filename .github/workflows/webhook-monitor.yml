@@ -56,7 +56,7 @@ jobs:
             retry_response=$(echo "$retried" | jq -r '.response.status_code')
 
             if [[ "$retry_response" == "200" ]]; then
-              mail_context="✅ Webhook delivery $retry_id succeeded after retry."
+              exit 1
             else
               mail_context="❌ Webhook delivery $retry_id failed after retry (status=$retry_status, response=$retry_response)."
             fi
