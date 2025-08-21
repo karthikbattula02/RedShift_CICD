@@ -39,7 +39,7 @@ jobs:
             });
 
             const latest = deliveries.data[0];
-            core.setOutput("status", latest.response.status);
+            core.setOutput("status", response.status_code);
             core.setOutput("hook_id", hookId);
 
       - name: Send Email if Webhook Failed
