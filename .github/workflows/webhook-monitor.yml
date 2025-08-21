@@ -33,13 +33,14 @@ jobs:
           delivery_id=$(echo "$latest" | jq -r '.id')
           status=$(echo "$latest" | jq -r '.status')
           response_code=$(echo "$latest" | jq -r '.response.status_code')
+          attempts=$(echo "$latest" | jq -r '.attempts')
 
-          mail_context="Webhook delivery $delivery_id status: $status (response: $response_code)"
+          mail_context="Webhook delivery $delivery_id status: $status (response: $response_code, attempts: $attempts)"
 
-          if [[ "$response_code" != "200" ]]; then
-            echo "❌ Delivery $delivery_id failed (response: $response_code). Retrying..."
+          # Retry only if failed and no previous attempts
+          if [[ "$response_code" != "200" && "$attempts" -eq 0 ]]; then
+            echo "❌ Delivery $delivery_id failed and not retried yet. Retrying..."
             
-            # Trigger redelivery
             gh api --method POST \
               -H "Accept: application/vnd.github+json" \
               /repos/$owner/$repo/hooks/$hookId/deliveries/$delivery_id/attempts
@@ -47,7 +48,7 @@ jobs:
             echo "Waiting 10 seconds before rechecking..."
             sleep 10
 
-            # Fetch latest delivery again
+            # Fetch the updated delivery after retry
             retried=$(gh api \
               -H "Accept: application/vnd.github+json" \
               /repos/$owner/$repo/hooks/$hookId/deliveries | jq '.[0]')
@@ -62,7 +63,10 @@ jobs:
               mail_context="❌ Webhook delivery $retry_id failed after retry (status: $retry_status, response: $retry_response)."
             fi
           else
-            mail_context="✅ Webhook delivery $delivery_id succeeded with response 200."
+            echo "✅ No redelivery needed. Delivery $delivery_id already succeeded or was retried."
+            if [[ "$response_code" == "200" ]]; then
+              mail_context="✅ Webhook delivery $delivery_id succeeded with response 200."
+            fi
           fi
 
           echo "Final message: $mail_context"
