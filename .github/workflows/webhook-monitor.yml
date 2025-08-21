@@ -1,22 +1,19 @@
-name: Webhook Delivery Checker
+name: Webhook Delivery Monitor
 
 on:
-  push: # Automatically triggers on every push to any branch
+  push:
 
 jobs:
-  check-webhook:
+  monitor-webhook:
     runs-on: ubuntu-latest
     steps:
-      - name: Get webhook deliveries
-        id: get_deliveries
+      - name: Wait for webhook to complete
+        run: sleep 10
+
+      - name: Get latest delivery ID
+        id: get_delivery
         run: |
-          curl -s -H "Authorization: Bearer ${{ secrets.WEBHOOK_PAT2 }}" \
-            https://api.github.com/repos/${{ github.repository }}/hooks \
-            > hooks.json
-
-          HOOK_ID=$(jq '.[0].id' hooks.json)
-          echo "hook_id=$HOOK_ID" >> $GITHUB_OUTPUT
-
+          HOOK_ID=558736907
           curl -s -H "Authorization: Bearer ${{ secrets.WEBHOOK_PAT2 }}" \
             https://api.github.com/repos/${{ github.repository }}/hooks/$HOOK_ID/deliveries \
             > deliveries.json
@@ -24,11 +21,11 @@ jobs:
           DELIVERY_ID=$(jq '.[0].id' deliveries.json)
           echo "delivery_id=$DELIVERY_ID" >> $GITHUB_OUTPUT
 
-      - name: Check delivery status
+      - name: Check initial delivery status
         id: check_status
         run: |
-          HOOK_ID=${{ steps.get_deliveries.outputs.hook_id }}
-          DELIVERY_ID=${{ steps.get_deliveries.outputs.delivery_id }}
+          HOOK_ID=558736907
+          DELIVERY_ID=${{ steps.get_delivery.outputs.delivery_id }}
 
           curl -s -H "Authorization: Bearer ${{ secrets.WEBHOOK_PAT2 }}" \
             https://api.github.com/repos/${{ github.repository }}/hooks/$HOOK_ID/deliveries/$DELIVERY_ID \
@@ -37,26 +34,58 @@ jobs:
           STATUS=$(jq -r '.status' delivery.json)
           echo "status=$STATUS" >> $GITHUB_OUTPUT
 
-      - name: Redeliver if not 200
+      - name: Send success email
+        if: steps.check_status.outputs.status == 'success'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.example.com
+          server_port: 587
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "Webhook Delivery Successful"
+          to: ${{ secrets.MAIL_TO }}
+          from: GitHub Actions <${{ secrets.EMAIL_USERNAME }}>
+          body: |
+            Webhook delivery succeeded with status: ${{ steps.check_status.outputs.status }}
+
+      - name: Redeliver webhook
         if: steps.check_status.outputs.status != 'success'
         run: |
-          HOOK_ID=${{ steps.get_deliveries.outputs.hook_id }}
-          DELIVERY_ID=${{ steps.get_deliveries.outputs.delivery_id }}
+          HOOK_ID=558736907
+          DELIVERY_ID=${{ steps.get_delivery.outputs.delivery_id }}
 
           curl -X POST -H "Authorization: Bearer ${{ secrets.WEBHOOK_PAT2 }}" \
             https://api.github.com/repos/${{ github.repository }}/hooks/$HOOK_ID/deliveries/$DELIVERY_ID/attempts
 
-      - name: Send email if still failing
+      - name: Wait before checking redelivery status
+        if: steps.check_status.outputs.status != 'success'
+        run: sleep 10
+
+      - name: Check redelivery status
+        id: check_redelivery
+        if: steps.check_status.outputs.status != 'success'
+        run: |
+          HOOK_ID=558736907
+          DELIVERY_ID=${{ steps.get_delivery.outputs.delivery_id }}
+
+          curl -s -H "Authorization: Bearer ${{ secrets.WEBHOOK_PAT2 }}" \
+            https://api.github.com/repos/${{ github.repository }}/hooks/$HOOK_ID/deliveries/$DELIVERY_ID \
+            > redelivery.json
+
+          STATUS=$(jq -r '.status' redelivery.json)
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+
+      - name: Send email with redelivery status
         if: steps.check_status.outputs.status != 'success'
         uses: dawidd6/action-send-mail@v3
         with:
-          server_address: smtp.gmail.com
+          server_address: smtp.example.com
           server_port: 587
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "Webhook Delivery Failed"
-          to: "photoskarthik2@gmail.com"
+          subject: "Webhook Redelivery Status"
+          to: ${{ secrets.MAIL_TO }}
           from: GitHub Actions <${{ secrets.EMAIL_USERNAME }}>
           body: |
-            Webhook delivery failed with status: ${{ steps.check_status.outputs.status }}
-            Response: $(cat delivery.json)
+            Webhook redelivery completed with status: ${{ steps.check_redelivery.outputs.status }}
+            Response: $(cat redelivery.json)
