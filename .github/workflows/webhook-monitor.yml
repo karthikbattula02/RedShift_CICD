@@ -24,18 +24,15 @@ jobs:
             const repo = context.repo.repo;
 
             // Get all webhooks
-            const hooks = await github.request("GET /repos/{owner}/{repo}/hooks", {
-              owner, repo
-            });
+            const hooks = await github.request("GET /repos/{owner}/{repo}/hooks", { owner, repo });
 
             if (!hooks.data.length) {
               core.setFailed("No webhooks found in this repo");
             }
 
-            // pick the first webhook (or replace with specific ID)
             const hookId = hooks.data[0].id;
 
-            // Get latest deliveries for this webhook
+            // Get deliveries for this webhook
             const deliveries = await github.request("GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries", {
               owner, repo, hook_id: hookId
             });
@@ -46,47 +43,15 @@ jobs:
 
             const latest = deliveries.data[0];
 
-            core.setOutput("status", latest.response?.status || latest.status || "unknown");
+            const status = latest.response?.status || latest.status || "unknown";
+
+            console.log("🔔 Webhook Delivery Check:");
+            console.log("Repository:", process.env.GITHUB_REPOSITORY);
+            console.log("Commit SHA:", process.env.sha);
+            console.log("Commit Message:", process.env.msg);
+            console.log("Webhook ID:", hookId);
+            console.log("Delivery ID:", latest.id);
+            console.log("Status:", status);
+
+            core.setOutput("status", status);
             core.setOutput("hook_id", hookId);
-
-      - name: Send Email if Webhook Failed
-        if: steps.webhook_status.outputs.status != '200'
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 587
-          username: ${{ secrets.EMAIL_USERNAME }}       # your Gmail address
-          password: ${{ secrets.EMAIL_PASSWORD }}       # MUST be Google App Password
-          subject: "❌ Webhook Failed for commit ${{ env.sha }}"
-          to: photoskarthik2@gmail.com
-          from: "GitHub Actions <${{ secrets.EMAIL_USERNAME }}>"
-          body: |
-            Webhook delivery failed.
-
-            Repository: ${{ github.repository }}
-            Commit SHA: ${{ env.sha }}
-            Commit Message: ${{ env.msg }}
-
-            Webhook ID: ${{ steps.webhook_status.outputs.hook_id }}
-            Status Code: ${{ steps.webhook_status.outputs.status }}
-
-      - name: Send Email if Webhook Succeeded
-        if: steps.webhook_status.outputs.status == '200'
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 587
-          username: ${{ secrets.EMAIL_USERNAME }}       # your Gmail address
-          password: ${{ secrets.EMAIL_PASSWORD }}       # MUST be Google App Password
-          subject: "✅ Webhook Succeeded for commit ${{ env.sha }}"
-          to: photoskarthik2@gmail.com
-          from: "GitHub Actions <${{ secrets.EMAIL_USERNAME }}>"
-          body: |
-            Webhook delivery succeeded.
-
-            Repository: ${{ github.repository }}
-            Commit SHA: ${{ env.sha }}
-            Commit Message: ${{ env.msg }}
-
-            Webhook ID: ${{ steps.webhook_status.outputs.hook_id }}
-            Status Code: ${{ steps.webhook_status.outputs.status }}
