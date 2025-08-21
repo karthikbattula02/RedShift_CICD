@@ -15,7 +15,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.WEBHOOK_PAT3 }}
         run: |
-          owner="karthikbattula"
+          owner="karthikbattula02"
           repo="RedShift_CICD"
           hookId=558736907
 
