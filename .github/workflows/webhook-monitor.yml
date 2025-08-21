@@ -60,6 +60,6 @@ jobs:
             - Commit: ${{ github.sha }}
             - Branch: ${{ github.ref }}
 
-          to: recipient@example.com
+          to: photoskarthik2@gmail.com
           from: ${{ secrets.EMAIL_USERNAME }}
           secure: true
