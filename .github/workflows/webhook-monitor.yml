@@ -2,79 +2,93 @@ name: Monitor Webhooks
 
 on:
   push:
-    branches: [main]
 
 jobs:
   check-webhook:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Get latest commit info
-        id: commit_info
-        run: |
-          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_ENV
-          echo "msg=$(git log -1 --pretty=%B)" >> $GITHUB_ENV
-
-      - name: Check webhook delivery
-        id: webhook_status
+      - name: Check webhook delivery for this commit
+        id: check
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.WEBHOOK_PAT2 }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
+            const commitSha = context.sha;
+            const commitMsg = context.payload.head_commit.message;
 
-            const hooks = await github.request("GET /repos/{owner}/{repo}/hooks", { owner, repo });
+            console.log(`🔎 Checking webhook delivery for commit: ${commitSha}`);
+            console.log(`💬 Commit message: ${commitMsg}`);
+
+            // Get all webhook deliveries
+            const hooks = await github.request("GET /repos/{owner}/{repo}/hooks", {
+              owner, repo
+            });
+
             if (!hooks.data.length) {
-              core.setFailed("❌ No webhooks found in this repo");
-              return;
+              throw new Error("No webhooks found in this repo!");
             }
 
             const hookId = hooks.data[0].id;
+
+            // Get deliveries for that hook
             const deliveries = await github.request("GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries", {
               owner, repo, hook_id: hookId
             });
 
-            if (!deliveries.data.length) {
-              core.setFailed("❌ No deliveries found for webhook " + hookId);
-              return;
+            // Match by commit SHA
+            let delivery = deliveries.data.find(d => 
+              d.request && d.request.payload && d.request.payload.after === commitSha
+            );
+
+            if (!delivery) {
+              throw new Error(`No webhook delivery found for commit ${commitSha}`);
             }
 
-            let latest = deliveries.data[0];
+            console.log(`📦 Webhook status: ${delivery.status}`);
+            if (delivery.status !== "ok") {
+              console.log("⚠️ Webhook failed, attempting redelivery...");
 
-            if (latest.status !== "ok") {
-              console.log("⚠️ First attempt failed, retrying delivery...");
+              // Redeliver
               await github.request("POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts", {
-                owner, repo, hook_id: hookId, delivery_id: latest.id
+                owner, repo, hook_id: hookId, delivery_id: delivery.id
               });
 
-              // Refetch after retry
-              const retried = await github.request("GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries", {
+              // Wait before checking again
+              await new Promise(r => setTimeout(r, 5000));
+
+              const deliveriesRetry = await github.request("GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries", {
                 owner, repo, hook_id: hookId
               });
-              latest = retried.data[0];
 
-              if (latest.status !== "ok") {
-                console.log("❌ Webhook failed again after redelivery.");
-                console.log(`Repository: ${owner}/${repo}`);
-                console.log(`Commit SHA: ${process.env.sha}`);
-                console.log(`Commit Message: ${process.env.msg}`);
-                console.log(`Webhook ID: ${hookId}`);
-                console.log(`Delivery ID: ${latest.id}`);
-                console.log(`Status: ${latest.status}`);
-                console.log(`Response Code: ${latest.response?.status_code || "N/A"}`);
-                return;
+              delivery = deliveriesRetry.data.find(d => 
+                d.request && d.request.payload && d.request.payload.after === commitSha
+              );
+
+              console.log(`🔁 After retry, webhook status: ${delivery.status}`);
+
+              if (delivery.status !== "ok") {
+                core.setFailed(`❌ Webhook failed even after retry for commit ${commitSha}`);
               }
+            } else {
+              console.log("✅ Webhook succeeded");
             }
 
-            // Success case
-            console.log("✅ Webhook delivered successfully.");
-            console.log(`Repository: ${owner}/${repo}`);
-            console.log(`Commit SHA: ${process.env.sha}`);
-            console.log(`Commit Message: ${process.env.msg}`);
-            console.log(`Webhook ID: ${hookId}`);
-            console.log(`Delivery ID: ${latest.id}`);
-            console.log(`Status: ${latest.status}`);
-            console.log(`Response Code: ${latest.response?.status_code || "N/A"}`);
+      - name: Send mail on failure
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "❌ Webhook failed for commit ${{ github.sha }}"
+          to: photoskarthik2@gmail.com
+          from: GitHub Actions <${{ secrets.MAIL_USERNAME }}>
+          body: |
+            Webhook failed even after retry.
+
+            📌 Repository: ${{ github.repository }}
+            🔗 Commit SHA: ${{ github.sha }}
+            💬 Commit Message: ${{ github.event.head_commit.message }}
