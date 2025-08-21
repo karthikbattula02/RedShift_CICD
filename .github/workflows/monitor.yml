@@ -13,7 +13,7 @@ jobs:
       - name: Check webhook and redeliver if failed
         id: check-webhook
         env:
-          GH_TOKEN: ${{ secrets.WEBHOOK_PAT2 }}
+          GH_TOKEN: ${{ secrets.WEBHOOK_PAT3 }}
         run: |
           owner="karthikbattula"
           repo="RedShift_CICD"
