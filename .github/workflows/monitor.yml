@@ -8,7 +8,7 @@ jobs:
   check-webhook:
     runs-on: ubuntu-latest
     outputs:
-      webhook_status: ${{ steps.check.outputs.status }}
+      webhook_code: ${{ steps.check.outputs.code }}
     steps:
       - name: Check webhook delivery
         id: check
@@ -28,10 +28,10 @@ jobs:
             const latest = deliveries[0];
             console.log("Latest delivery:", latest);
 
-            let status = latest.status;
+            let code = latest.response.code;
 
-            if (status !== "success") {
-              console.log(`Webhook delivery ${latest.id} failed with status: ${status}. Retrying...`);
+            if (code !== 200) {
+              console.log(`Webhook delivery ${latest.id} returned code ${code}. Retrying...`);
               await github.request(
                 "POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts",
                 { owner, repo, hook_id: hookId, delivery_id: latest.id }
@@ -47,13 +47,13 @@ jobs:
 
               const redelivery = updatedDeliveries[0];
               console.log("Redelivery result:", redelivery);
-              status = redelivery.status;
+              code = redelivery.response.code;
             }
 
-            core.setOutput("status", status);
+            core.setOutput("code", code);
   send-email:
     needs: check-webhook
-    if: needs.check-webhook.outputs.webhook_status != 'success'
+    if: needs.check-webhook.outputs.webhook_code != '200'
     runs-on: ubuntu-latest
     steps:
       - name: Send Email
@@ -67,7 +67,7 @@ jobs:
           body: |
             Webhook delivery failed.
 
-            Status: ${{ needs.check-webhook.outputs.webhook_status }}
+            HTTP Code: ${{ needs.check-webhook.outputs.webhook_code }}
             Repo: ${{ github.repository }}
             Commit: ${{ github.sha }}
             Branch: ${{ github.ref }}
