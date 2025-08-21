@@ -23,7 +23,7 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
-            // Fetch latest webhook deliveries
+            // Fetch repo hooks
             const hooks = await github.request("GET /repos/{owner}/{repo}/hooks", {
               owner, repo
             });
@@ -34,12 +34,18 @@ jobs:
 
             const hookId = hooks.data[0].id;
 
+            // Fetch deliveries for this hook
             const deliveries = await github.request("GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries", {
               owner, repo, hook_id: hookId
             });
 
             const latest = deliveries.data[0];
-            core.setOutput("status", response.status_code);
+
+            console.log("Latest webhook delivery:", latest);
+
+            const statusCode = latest.response?.status || latest.response?.code || "unknown";
+
+            core.setOutput("status", statusCode);
             core.setOutput("hook_id", hookId);
 
       - name: Send Email if Webhook Failed
@@ -54,7 +60,7 @@ jobs:
           to: "yourmail@example.com"
           from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
           body: |
-            Webhook delivery failed.
+            Webhook delivery failed 🚨
 
             Repository: ${{ github.repository }}
             Commit SHA: ${{ env.sha }}
@@ -75,7 +81,7 @@ jobs:
           to: "yourmail@example.com"
           from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
           body: |
-            Webhook delivery succeeded.
+            Webhook delivery succeeded 🎉
 
             Repository: ${{ github.repository }}
             Commit SHA: ${{ env.sha }}
