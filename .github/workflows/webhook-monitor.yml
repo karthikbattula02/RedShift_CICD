@@ -7,95 +7,79 @@ on:
 jobs:
   check-webhook:
     runs-on: ubuntu-latest
-    outputs:
-      final_status: ${{ steps.check.outputs.final_status }}
     steps:
-      - name: Check and Redeliver Webhook if Needed
-        id: check
+      - name: Get latest commit info
+        id: commit_info
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_ENV
+          echo "msg=$(git log -1 --pretty=%B)" >> $GITHUB_ENV
+
+      - name: Check webhook delivery
+        id: webhook_status
         uses: actions/github-script@v6
         with:
-          github-token: ${{ secrets.WEBHOOK_PAT2 }}
+          github-token: ${{ secrets.WEBHOOK_PAT }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const hookId = 558736907;
 
-            // Current push commit SHA
-            const currentSha = context.sha;
+            // Fetch latest webhook deliveries
+            const hooks = await github.request("GET /repos/{owner}/{repo}/hooks", {
+              owner, repo
+            });
 
-            // Fetch recent deliveries
-            const { data: deliveries } = await github.request(
-              "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries",
-              { owner, repo, hook_id: hookId, per_page: 20 }
-            );
-
-            // Try to match delivery by commit SHA
-            let myDelivery = null;
-            for (const d of deliveries) {
-              try {
-                const payload = JSON.parse(d.request.payload);
-                if (payload.after === currentSha) {
-                  myDelivery = d;
-                  break;
-                }
-              } catch (e) {
-                console.log("Skipping delivery (could not parse payload):", d.id);
-              }
+            if (!hooks.data.length) {
+              core.setFailed("No webhooks found in this repo");
             }
 
-            if (!myDelivery) {
-              core.setFailed(`No webhook delivery found for commit ${currentSha}`);
-              return;
-            }
+            const hookId = hooks.data[0].id;
 
-            console.log("Matched delivery:", myDelivery);
-            let finalStatus = myDelivery.status;
+            const deliveries = await github.request("GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries", {
+              owner, repo, hook_id: hookId
+            });
 
-            // If not OK, retry
-            if (finalStatus !== "ok") {
-              console.log(`Webhook delivery ${myDelivery.id} failed (${finalStatus}). Retrying...`);
-              await github.request(
-                "POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts",
-                { owner, repo, hook_id: hookId, delivery_id: myDelivery.id }
-              );
+            const latest = deliveries.data[0];
+            core.setOutput("status", latest.response.status);
+            core.setOutput("hook_id", hookId);
 
-              // Wait before checking again
-              await new Promise(r => setTimeout(r, 5000));
-
-              // Refetch deliveries and get the same one
-              const { data: redeliveries } = await github.request(
-                "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries",
-                { owner, repo, hook_id: hookId, per_page: 20 }
-              );
-
-              const updated = redeliveries.find(d => d.id === myDelivery.id);
-              if (updated) {
-                console.log("After redelivery:", updated);
-                finalStatus = updated.status;
-              }
-            }
-
-            core.setOutput("final_status", finalStatus);
-
-  send-email:
-    needs: check-webhook
-    runs-on: ubuntu-latest
-    steps:
-      - name: Send Email
+      - name: Send Email if Webhook Failed
+        if: steps.webhook_status.outputs.status != '200'
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.EMAIL_USERNAME }}
-          password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "GitHub Webhook Status Notification"
+          server_port: 587
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "❌ Webhook Failed for commit ${{ env.sha }}"
+          to: "yourmail@example.com"
+          from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
           body: |
-            Final Webhook Status: ${{ needs.check-webhook.outputs.final_status }}
+            Webhook delivery failed.
 
             Repository: ${{ github.repository }}
-            Commit SHA: ${{ github.sha }}
-            Branch: ${{ github.ref }}
+            Commit SHA: ${{ env.sha }}
+            Commit Message: ${{ env.msg }}
 
-          to: photoskarthik2@gmail.com
-          from: ${{ secrets.EMAIL_USERNAME }}
-          secure: true
+            Webhook ID: ${{ steps.webhook_status.outputs.hook_id }}
+            Status Code: ${{ steps.webhook_status.outputs.status }}
+
+      - name: Send Email if Webhook Succeeded
+        if: steps.webhook_status.outputs.status == '200'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "✅ Webhook Succeeded for commit ${{ env.sha }}"
+          to: "yourmail@example.com"
+          from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
+          body: |
+            Webhook delivery succeeded.
+
+            Repository: ${{ github.repository }}
+            Commit SHA: ${{ env.sha }}
+            Commit Message: ${{ env.msg }}
+
+            Webhook ID: ${{ steps.webhook_status.outputs.hook_id }}
+            Status Code: ${{ steps.webhook_status.outputs.status }}
