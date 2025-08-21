@@ -20,37 +20,59 @@ jobs:
             const repo = context.repo.repo;
             const hookId = 558736907;
 
-            // Fetch latest delivery
+            // Current push commit SHA
+            const currentSha = context.sha;
+
+            // Fetch recent deliveries
             const { data: deliveries } = await github.request(
               "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries",
-              { owner, repo, hook_id: hookId }
+              { owner, repo, hook_id: hookId, per_page: 20 }
             );
 
-            const latest = deliveries[0];
-            console.log("Latest delivery:", latest);
+            // Try to match delivery by commit SHA
+            let myDelivery = null;
+            for (const d of deliveries) {
+              try {
+                const payload = JSON.parse(d.request.payload);
+                if (payload.after === currentSha) {
+                  myDelivery = d;
+                  break;
+                }
+              } catch (e) {
+                console.log("Skipping delivery (could not parse payload):", d.id);
+              }
+            }
 
-            let finalStatus = latest.status;
+            if (!myDelivery) {
+              core.setFailed(`No webhook delivery found for commit ${currentSha}`);
+              return;
+            }
 
-            // If not OK, retry delivery
-            if (latest.status !== "ok") {
-              console.log(`Webhook delivery ${latest.id} failed (${latest.status}). Retrying...`);
+            console.log("Matched delivery:", myDelivery);
+            let finalStatus = myDelivery.status;
+
+            // If not OK, retry
+            if (finalStatus !== "ok") {
+              console.log(`Webhook delivery ${myDelivery.id} failed (${finalStatus}). Retrying...`);
               await github.request(
                 "POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts",
-                { owner, repo, hook_id: hookId, delivery_id: latest.id }
+                { owner, repo, hook_id: hookId, delivery_id: myDelivery.id }
               );
 
-              // Wait for GitHub to process redelivery
+              // Wait before checking again
               await new Promise(r => setTimeout(r, 5000));
 
-              // Get latest delivery again
+              // Refetch deliveries and get the same one
               const { data: redeliveries } = await github.request(
                 "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries",
-                { owner, repo, hook_id: hookId }
+                { owner, repo, hook_id: hookId, per_page: 20 }
               );
 
-              const newLatest = redeliveries[0];
-              console.log("After redelivery:", newLatest);
-              finalStatus = newLatest.status;
+              const updated = redeliveries.find(d => d.id === myDelivery.id);
+              if (updated) {
+                console.log("After redelivery:", updated);
+                finalStatus = updated.status;
+              }
             }
 
             core.setOutput("final_status", finalStatus);
