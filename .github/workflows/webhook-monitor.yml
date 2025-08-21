@@ -16,6 +16,7 @@ jobs:
         with:
           github-token: ${{ secrets.WEBHOOK_PAT2 }}
           script: |
+            const core = require('@actions/core');
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const hookId = 558736907;
@@ -30,19 +31,20 @@ jobs:
             console.log("Latest delivery:", latest);
 
             let finalStatus = latest.status;
+            let needEmail = false;
 
-            // If not OK, retry delivery
-            if (latest.status !== "ok") {
+            // Retry only if delivery failed
+            if (latest.status !== "success") {
               console.log(`Webhook delivery ${latest.id} failed (${latest.status}). Retrying...`);
+              needEmail = true;
+
               await github.request(
                 "POST /repos/{owner}/{repo}/hooks/{hook_id}/deliveries/{delivery_id}/attempts",
                 { owner, repo, hook_id: hookId, delivery_id: latest.id }
               );
 
-              // Wait for GitHub to process redelivery
               await new Promise(r => setTimeout(r, 5000));
 
-              // Get latest delivery again
               const { data: redeliveries } = await github.request(
                 "GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries",
                 { owner, repo, hook_id: hookId }
@@ -51,11 +53,15 @@ jobs:
               const newLatest = redeliveries[0];
               console.log("After redelivery:", newLatest);
               finalStatus = newLatest.status;
+            } else {
+              console.log("Webhook delivery successful. No redelivery needed.");
             }
 
             core.setOutput("final_status", finalStatus);
+            core.setOutput("send_email", needEmail);
 
   send-email:
+    if: ${{ needs.check-webhook.outputs.send_email == 'true' }}
     needs: check-webhook
     runs-on: ubuntu-latest
     steps:
