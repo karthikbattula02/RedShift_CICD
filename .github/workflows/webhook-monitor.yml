@@ -23,35 +23,39 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
-            // Get all webhooks
+            // Fetch repo webhooks
             const hooks = await github.request("GET /repos/{owner}/{repo}/hooks", { owner, repo });
-
             if (!hooks.data.length) {
-              core.setFailed("No webhooks found in this repo");
+              core.setFailed("❌ No webhooks found in this repo");
+              return;
             }
 
             const hookId = hooks.data[0].id;
 
-            // Get deliveries for this webhook
+            // Get deliveries for the latest webhook
             const deliveries = await github.request("GET /repos/{owner}/{repo}/hooks/{hook_id}/deliveries", {
               owner, repo, hook_id: hookId
             });
 
             if (!deliveries.data.length) {
-              core.setFailed("No webhook deliveries found");
+              core.setFailed("❌ No deliveries found for webhook " + hookId);
+              return;
             }
 
             const latest = deliveries.data[0];
 
-            const status = latest.response?.status || latest.status || "unknown";
-
+            // Log everything to console
             console.log("🔔 Webhook Delivery Check:");
-            console.log("Repository:", process.env.GITHUB_REPOSITORY);
-            console.log("Commit SHA:", process.env.sha);
-            console.log("Commit Message:", process.env.msg);
-            console.log("Webhook ID:", hookId);
-            console.log("Delivery ID:", latest.id);
-            console.log("Status:", status);
+            console.log(`Repository: ${owner}/${repo}`);
+            console.log(`Commit SHA: ${process.env.sha}`);
+            console.log(`Commit Message: ${process.env.msg}`);
+            console.log(`Webhook ID: ${hookId}`);
+            console.log(`Delivery ID: ${latest.id}`);
+            console.log(`Status: ${latest.status}`);                // OK, failed, etc.
+            console.log(`Response Code: ${latest.response?.status_code || "N/A"}`); // 200, 404, timeout, etc.
 
-            core.setOutput("status", status);
+            // Export outputs if you want to use them later
+            core.setOutput("status", latest.status);
+            core.setOutput("response_code", latest.response?.status_code || "N/A");
             core.setOutput("hook_id", hookId);
+            core.setOutput("delivery_id", latest.id);
