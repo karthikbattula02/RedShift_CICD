@@ -9,14 +9,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Setup GitHub CLI
+        run: sudo apt-get install -y gh jq
 
       - name: Check webhook and redeliver if failed
         id: check-webhook
         env:
           GH_TOKEN: ${{ secrets.WEBHOOK_PAT2 }}
         run: |
-          owner="karthikbattula02"
-          repo="RedShift_CICD"
+          owner="${GITHUB_REPOSITORY%/*}"
+          repo="${GITHUB_REPOSITORY#*/}"
           hookId=558736907
 
           echo "Checking latest webhook delivery for $owner/$repo (hook=$hookId)..."
