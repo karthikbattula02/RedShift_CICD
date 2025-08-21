@@ -33,40 +33,43 @@ jobs:
 
           echo "Latest delivery: id=$delivery_id, status=$status, response=$response_code"
 
-          # ✅ Treat success as either "OK" or response code 200
           if [[ "$status" == "OK" || "$response_code" == "200" ]]; then
-            mail_context="✅ Webhook delivery $delivery_id succeeded (status=$status, response=$response_code)."
-          else
-            echo "Delivery $delivery_id failed (status=$status, response=$response_code). Retrying once..."
-
-            gh api \
-              --method POST \
-              -H "Accept: application/vnd.github+json" \
-              /repos/$owner/$repo/hooks/$hookId/deliveries/$delivery_id/attempts
-
-            echo "Waiting 10s before checking again..."
-            sleep 10
-
-            retried=$(gh api \
-              -H "Accept: application/vnd.github+json" \
-              /repos/$owner/$repo/hooks/$hookId/deliveries | jq '.[0]')
-
-            retry_id=$(echo "$retried" | jq -r '.id')
-            retry_status=$(echo "$retried" | jq -r '.status')
-            retry_response=$(echo "$retried" | jq -r '.response.status_code')
-
-            echo "Retry delivery: id=$retry_id, status=$retry_status, response=$retry_response"
-
-            if [[ "$retry_status" == "OK" || "$retry_response" == "200" ]]; then
-              mail_context="✅ Webhook delivery $retry_id succeeded after retry."
-            else
-              mail_context="❌ Webhook delivery $retry_id failed after retry (status=$retry_status, response=$retry_response)."
-            fi
+            echo "✅ Webhook delivery succeeded. No mail needed."
+            echo "send_mail=false" >> $GITHUB_OUTPUT
+            exit 0
           fi
 
-          echo "mail_context=$mail_context" >> $GITHUB_OUTPUT
+          echo "Delivery $delivery_id failed (status=$status, response=$response_code). Retrying once..."
+
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            /repos/$owner/$repo/hooks/$hookId/deliveries/$delivery_id/attempts
+
+          echo "Waiting 10s before checking again..."
+          sleep 10
+
+          retried=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            /repos/$owner/$repo/hooks/$hookId/deliveries | jq '.[0]')
+
+          retry_id=$(echo "$retried" | jq -r '.id')
+          retry_status=$(echo "$retried" | jq -r '.status')
+          retry_response=$(echo "$retried" | jq -r '.response.status_code')
+
+          echo "Retry delivery: id=$retry_id, status=$retry_status, response=$retry_response"
+
+          if [[ "$retry_status" == "OK" || "$retry_response" == "200" ]]; then
+            echo "✅ Webhook delivery succeeded after retry. No mail needed."
+            echo "send_mail=false" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Webhook delivery failed after retry."
+            echo "mail_context=❌ Webhook delivery $retry_id failed after retry (status=$retry_status, response=$retry_response)." >> $GITHUB_OUTPUT
+            echo "send_mail=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: Send mail
+        if: steps.check-webhook.outputs.send_mail == 'true'
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
