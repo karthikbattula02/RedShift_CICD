@@ -75,8 +75,8 @@ jobs:
         with:
           server_address: smtp.gmail.com
           server_port: 587
-          username: ${{ secrets.MAIL_USERNAME }}
-          password: ${{ secrets.MAIL_PASSWORD }}
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
           subject: "✅ Webhook Succeeded for commit ${{ env.sha }}"
           to: "yourmail@example.com"
           from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
