@@ -13,7 +13,7 @@ jobs:
       - name: Check webhook and redeliver if failed
         id: check-webhook
         env:
-          GH_TOKEN: ${{ secrets.WEBHOOK_PAT3 }}
+          GH_TOKEN: ${{ secrets.WEBHOOK_PAT2 }}
         run: |
           owner="karthikbattula02"
           repo="RedShift_CICD"
@@ -23,44 +23,46 @@ jobs:
 
           latest=$(gh api \
             -H "Accept: application/vnd.github+json" \
-            /repos/$owner/$repo/hooks/$hookId)
+            /repos/$owner/$repo/hooks/$hookId/deliveries | jq '.[0]')
 
-          status=$(echo "$latest" | jq -r '.last_response.status')
-          response_code=$(echo "$latest" | jq -r '.last_response.code')
+          delivery_id=$(echo "$latest" | jq -r '.id')
+          status=$(echo "$latest" | jq -r '.status')
+          response_code=$(echo "$latest" | jq -r '.response.status_code')
 
-          echo "Latest delivery: status=$status, response=$response_code"
+          echo "Latest delivery: id=$delivery_id, status=$status, response=$response_code"
 
-          if [[ "$status" == "ok" || "$response_code" == "200" ]]; then
-            echo "✅ Webhook succeeded (status=$status, response=$response_code)."
+          if [[ "$status" == "OK" || "$response_code" == "200" ]]; then
+            echo "✅ Webhook delivery $delivery_id succeeded (status=$status, response=$response_code)."
             echo "send_mail=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          echo "Webhook failed (status=$status, response=$response_code). Retrying once..."
+          echo "Delivery $delivery_id failed (status=$status, response=$response_code). Retrying once..."
 
           gh api \
             --method POST \
             -H "Accept: application/vnd.github+json" \
-            /repos/$owner/$repo/hooks/$hookId
+            /repos/$owner/$repo/hooks/$hookId/deliveries/$delivery_id/attempts
 
           echo "Waiting 10s before checking again..."
           sleep 10
 
           retried=$(gh api \
             -H "Accept: application/vnd.github+json" \
-            /repos/$owner/$repo/hooks/$hookId)
+            /repos/$owner/$repo/hooks/$hookId | jq '.[0]')
 
-          retry_status=$(echo "$retried" | jq -r '.last_response.status')
-          retry_response=$(echo "$retried" | jq -r '.last_response.code')
+          retry_id=$(echo "$retried" | jq -r '.id')
+          retry_status=$(echo "$retried" | jq -r '.status')
+          retry_response=$(echo "$retried" | jq -r '.response.status_code')
 
-          echo "Retry result: status=$retry_status, response=$retry_response"
+          echo "Retry delivery: id=$retry_id, status=$retry_status, response=$retry_response"
 
-          if [[ "$retry_status" == "ok" || "$retry_response" == "200" ]]; then
-            echo "✅ Webhook succeeded after retry (status=$retry_status, response=$retry_response)."
+          if [[ "$retry_status" == "OK" || "$retry_response" == "200" ]]; then
+            echo "✅ Webhook delivery $retry_id succeeded after retry (status=$retry_status, response=$retry_response)."
             echo "send_mail=false" >> $GITHUB_OUTPUT
           else
-            echo "❌ Webhook failed after retry (status=$retry_status, response=$retry_response)."
-            echo "mail_context=❌ Webhook failed after retry (status=$retry_status, response=$retry_response)." >> $GITHUB_OUTPUT
+            echo "❌ Webhook delivery $retry_id failed after retry (status=$retry_status, response=$retry_response)."
+            echo "mail_context=❌ Webhook delivery $retry_id failed after retry (status=$retry_status, response=$retry_response)." >> $GITHUB_OUTPUT
             echo "send_mail=true" >> $GITHUB_OUTPUT
           fi
 
