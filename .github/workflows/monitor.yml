@@ -9,8 +9,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
-      - name: Check webhook and redeliver if failed
+      - name: Check webhook config
         id: check-webhook
         env:
           GH_TOKEN: ${{ secrets.WEBHOOK_PAT2 }}
@@ -19,7 +18,35 @@ jobs:
           repo="RedShift_CICD"
           hookId=558736907
 
-          echo "Checking latest webhook delivery for $owner/$repo (hook=$hookId)..."
+          echo "Checking webhook config for $owner/$repo (hook=$hookId)..."
+
+          webhook=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            /repos/$owner/$repo/hooks/$hookId)
+
+          is_active=$(echo "$webhook" | jq -r '.active')
+          hook_url=$(echo "$webhook" | jq -r '.config.url')
+
+          echo "Webhook active: $is_active"
+          echo "Webhook URL: $hook_url"
+
+          if [[ "$is_active" != "true" ]]; then
+            echo "❌ Webhook is inactive."
+            echo "mail_context=❌ Webhook is inactive. URL: $hook_url" >> $GITHUB_OUTPUT
+            echo "send_mail=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Webhook is active. Proceeding to check last delivery status..."
+
+      - name: Check latest delivery and redeliver if failed
+        id: redeliver
+        env:
+          GH_TOKEN: ${{ secrets.WEBHOOK_PAT2 }}
+        run: |
+          owner="karthikbattula02"
+          repo="RedShift_CICD"
+          hookId=558736907
 
           latest=$(gh api \
             -H "Accept: application/vnd.github+json" \
@@ -32,24 +59,24 @@ jobs:
           echo "Latest delivery: id=$delivery_id, status=$status, response=$response_code"
 
           if [[ "$status" == "OK" || "$response_code" == "200" ]]; then
-            echo "✅ Webhook delivery $delivery_id succeeded (status=$status, response=$response_code)."
+            echo "✅ Webhook delivery $delivery_id succeeded."
             echo "send_mail=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          echo "Delivery $delivery_id failed (status=$status, response=$response_code). Retrying once..."
+          echo "❌ Delivery $delivery_id failed. Retrying..."
 
           gh api \
             --method POST \
             -H "Accept: application/vnd.github+json" \
             /repos/$owner/$repo/hooks/$hookId/deliveries/$delivery_id/attempts
 
-          echo "Waiting 10s before checking again..."
+          echo "Waiting 10s before checking retry result..."
           sleep 10
 
           retried=$(gh api \
             -H "Accept: application/vnd.github+json" \
-            /repos/$owner/$repo/hooks/$hookId | jq '.[0]')
+            /repos/$owner/$repo/hooks/$hookId/deliveries | jq '.[0]')
 
           retry_id=$(echo "$retried" | jq -r '.id')
           retry_status=$(echo "$retried" | jq -r '.status')
@@ -58,23 +85,23 @@ jobs:
           echo "Retry delivery: id=$retry_id, status=$retry_status, response=$retry_response"
 
           if [[ "$retry_status" == "OK" || "$retry_response" == "200" ]]; then
-            echo "✅ Webhook delivery $retry_id succeeded after retry (status=$retry_status, response=$retry_response)."
+            echo "✅ Retry succeeded."
             echo "send_mail=false" >> $GITHUB_OUTPUT
           else
-            echo "❌ Webhook delivery $retry_id failed after retry (status=$retry_status, response=$retry_response)."
-            echo "mail_context=❌ Webhook delivery $retry_id failed after retry (status=$retry_status, response=$retry_response)." >> $GITHUB_OUTPUT
+            echo "❌ Retry failed."
+            echo "mail_context=❌ Webhook delivery $retry_id failed after retry. Status=$retry_status, Response=$retry_response" >> $GITHUB_OUTPUT
             echo "send_mail=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Send mail
-        if: steps.check-webhook.outputs.send_mail == 'true'
+      - name: Send mail if needed
+        if: steps.check-webhook.outputs.send_mail == 'true' || steps.redeliver.outputs.send_mail == 'true'
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 465
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "GitHub Webhook Delivery Status"
+          subject: "GitHub Webhook Issue"
           to: "photoskarthik2@gmail.com"
           from: "karthikknvamma@gmail.com"
-          body: ${{ steps.check-webhook.outputs.mail_context }}
+          body: ${{ steps.check-webhook.outputs.mail_context || steps.redeliver.outputs.mail_context }}
